@@ -964,6 +964,14 @@ function BoardView:rectFor(point, player)
     return L.point[point]
 end
 
+-- Pacing for the computer's turn, in seconds. The moves are deliberately
+-- unhurried so a human can see which checker moved and follow the play; tune
+-- them here.
+local AI_DELAY_ROLL   = 0.6   -- handover -> the computer rolls
+local AI_DELAY_FIRST  = 2.0   -- dice shown -> the computer's first move
+local AI_DELAY_BETWEEN = 1.6  -- between the computer's moves within a turn
+local AI_DELAY_PASS   = 2.0   -- a dead roll is shown before the turn passes back
+
 -- If it is the computer's turn to roll, start its turn after a short beat so
 -- the human sees the handover. A no-op in two-player games.
 function BoardView:maybeStartAI()
@@ -972,7 +980,7 @@ function BoardView:maybeStartAI()
     if g.phase == "roll" and g.player == self.ai_side then
         self.ai_busy = true
         self:refreshTop()
-        UIManager:scheduleIn(0.4, self._ai_roll)
+        UIManager:scheduleIn(AI_DELAY_ROLL, self._ai_roll)
     end
 end
 
@@ -989,23 +997,31 @@ function BoardView:aiRoll()
     self:refreshEach("fast", self.L.dice_area)
     self:refreshTop()
     if what == "pass" then
+        -- make it clear it is the computer that is stuck, and hold the dead dice
+        -- on screen long enough to read before the turn hands back
+        g.message = "Computer can't move"
+        self:refreshTop()
         self:refreshBottom()
-        UIManager:scheduleIn(0.9, self._ai_after_pass)
+        UIManager:scheduleIn(AI_DELAY_PASS, self._ai_after_pass)
         return
     end
     local AI = require("bg/ai")
     self.ai_moves = AI.chooseTurn(g.state, g.player, g.dice, g.ndice, self.ai_level)
     self.ai_i = 0
     if #self.ai_moves == 0 then
-        UIManager:scheduleIn(0.9, self._ai_after_pass)
+        g.message = "Computer can't move"
+        self:refreshTop()
+        self:refreshBottom()
+        UIManager:scheduleIn(AI_DELAY_PASS, self._ai_after_pass)
         return
     end
-    UIManager:scheduleIn(0.6, self._ai_step)
+    UIManager:scheduleIn(AI_DELAY_FIRST, self._ai_step)
 end
 
 function BoardView:aiAfterPass()
     if self.closing then return end
     self.game:passTurn()
+    self.game.message = nil
     self.ai_busy = false
     self:refreshTop()
     self:refreshBottom()
@@ -1035,7 +1051,7 @@ function BoardView:aiStep()
         return
     end
     -- more of the computer's moves to play, one at a time so they are followable
-    UIManager:scheduleIn(0.5, self._ai_step)
+    UIManager:scheduleIn(AI_DELAY_BETWEEN, self._ai_step)
 end
 
 -- Apply one computer move and refresh it the same way a human move is refreshed.
