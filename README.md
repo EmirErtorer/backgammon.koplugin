@@ -6,7 +6,7 @@ Both players share one device and take turns on the same screen.
 Built for e-ink: flat greys instead of textures, checkers told apart by shape as
 well as shade, and small screen refreshes so play stays responsive.
 
-- Two players on one device, no AI opponent yet
+- Two players on one device
 - Full standard rules: hitting, the bar, bearing off, forced moves, doubles
 - Tap to select a checker, tap a highlighted point to move — no dragging
 - Session scoreboard with 1 / 2 / 3 point scoring (mars and backgammon)
@@ -108,7 +108,7 @@ rather than rotating the whole device.
 
 ## Limitations
 
-- Two human players only — no computer opponent.
+- Two human players only, no computer opponent yet.
 - No doubling cube.
 - No undo once a checker is tapped into place.
 - Bearing off is always on the right; the side is not configurable.
