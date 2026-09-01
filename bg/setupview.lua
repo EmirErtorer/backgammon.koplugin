@@ -141,24 +141,33 @@ function SetupView:paintTo(bb, x, y)
     self.hit.ai = r2
     yy = yy + self.row_h + self.gap
 
+    -- footer position is fixed; difficulty rows fit into the space above it
+    local H = Screen:getHeight()
+    local start_h = math.floor(unit * 3)
+    local footer_top = H - start_h - math.floor(unit * 1.6)
+
     -- Difficulty (only when playing the computer)
     if self.opponent == "ai" then
         yy = yy + math.floor(unit * 0.4)
         self:drawText(bb, self.col_x, yy, self.face_small, "DIFFICULTY", true, BLACK_C)
         yy = yy + math.floor(unit * 0.6)
         self.hit.levels = {}
+        local nlv = #AI.levels
+        local rgap = math.floor(self.gap * 0.5)
+        -- shrink rows if needed so all levels fit above the Start button
+        local avail = footer_top - yy - math.floor(unit * 0.4)
+        local dh = math.floor((avail - rgap * (nlv - 1)) / nlv)
+        if dh > self.row_h then dh = self.row_h end
         for _, lv in ipairs(AI.levels) do
-            local r = rect(self.col_x, yy, self.col_w, self.row_h)
+            local r = rect(self.col_x, yy, self.col_w, dh)
             self:drawRow(bb, r, lv.id .. ".  " .. lv.name, lv.desc, self.level == lv.id)
             self.hit.levels[lv.id] = r
-            yy = yy + self.row_h + math.floor(self.gap * 0.7)
+            yy = yy + dh + rgap
         end
     end
 
     -- Start / Close pinned near the bottom
-    local H = Screen:getHeight()
-    local start_h = math.floor(unit * 3)
-    local start_r = rect(self.col_x, H - start_h - math.floor(unit * 1.6), self.col_w, start_h)
+    local start_r = rect(self.col_x, footer_top, self.col_w, start_h)
     bb:paintRoundedRect(start_r.x, start_r.y, start_r.w, start_r.h, BLACK_C, math.floor(unit * 0.4))
     self:drawCentered(bb, cx, start_r.y + math.floor(start_r.h / 2) + math.floor(self.face.size * 0.4),
                       self.face, "Start game", true, WHITE_C)

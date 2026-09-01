@@ -142,9 +142,10 @@ AI.levels = {
       ply = 1, eval = "positional", blunder = 0.10 },
     { id = 3, name = "Skilled",  desc = "Looks a roll ahead, plays the odds",
       ply = 2, eval = "positional", blunder = 0.0 },
-    -- planned, not yet enabled:
-    -- { id = 4, name = "Expert",   ply = 1, eval = "gnu",        blunder = 0.0 },
-    -- { id = 5, name = "Master",   ply = 2, eval = "gnu",        blunder = 0.0 },
+    { id = 4, name = "Expert",   desc = "GNU neural net, world-class judgement",
+      ply = 1, eval = "gnu", blunder = 0.0 },
+    { id = 5, name = "Master",   desc = "GNU neural net, looks a roll ahead",
+      ply = 2, eval = "gnu", blunder = 0.0 },
 }
 
 function AI.level(id)
@@ -395,6 +396,133 @@ local function chooseTurn2ply(s, player, turns, evaluator)
     return best.moves
 end
 
+--------------------------------------------------------------------------
+-- GNU neural-net levels (4 and 5). The net's equity is turn-dependent (it
+-- bakes in the on-roll advantage), unlike the static heuristic, so these need
+-- their own search that tracks whose roll it is at each leaf.
+--------------------------------------------------------------------------
+
+local GNU = require("bg/gnu")
+local gnu_nets
+
+-- convert engine state to gnubg's board, with `me` on roll (anBoard[1]).
+-- reuses buffers so the search stays allocation-free.
+local gnuBoard = { [0] = {}, [1] = {} }
+local function toGnu(s, me)
+    local b0, b1 = gnuBoard[0], gnuBoard[1]
+    for k = 0, 24 do b0[k] = 0; b1[k] = 0 end
+    local pts = s.points
+    for p = 1, 24 do
+        local v = pts[p]
+        if v > 0 then                       -- WHITE checkers: index p-1
+            gnuBoard[(me == WHITE) and 1 or 0][p - 1] = v
+        elseif v < 0 then                   -- BLACK checkers: index 24-p
+            gnuBoard[(me == BLACK) and 1 or 0][24 - p] = -v
+        end
+    end
+    gnuBoard[(me == WHITE) and 1 or 0][24] = s.bar[WHITE]
+    gnuBoard[(me == BLACK) and 1 or 0][24] = s.bar[BLACK]
+    return gnuBoard
+end
+
+-- value of position `s` to `side`, assuming `side` is on roll. Terminal
+-- positions dominate so a winning move is always taken over a non-winning one.
+local function gnuValue(s, side)
+    local w = R.winner(s)
+    if w == side then return 3.0 end
+    if w == -side then return -3.0 end
+    return GNU.equity(toGnu(s, side), gnu_nets) or 0.0
+end
+
+-- The opponent typically has ~15 legal replies per roll; net-evaluating all of
+-- them at 2-ply is too slow on a device. So we screen replies with the fast
+-- positional heuristic and only net-evaluate the opponent's most promising few
+-- (the ones best for the opponent). gnubg uses the same move-filter idea.
+local GNU_OPP_KEEP = 8
+local rep_scored = {}
+
+-- expected value to `player` after its move: average over the opponent's 21
+-- rolls of the reply that is worst for `player` (opponent then, us next).
+local function opponentReplyValueGNU(s, player)
+    local opp = -player
+    local total, wsum = 0, 0
+    for ri = 1, #ROLLS do
+        local rc = ROLLS[ri]
+        local a, b, ndice, w = rc[1], rc[2], rc[3], rc[4]
+        if ndice == 4 then
+            roll_dice[1], roll_dice[2], roll_dice[3], roll_dice[4] = a, a, a, a
+        else
+            roll_dice[1], roll_dice[2] = a, b
+        end
+        local replies = AI.enumerateTurns(s, opp, roll_dice, ndice)
+        local nrep = #replies
+        local worst
+        if nrep == 0 then
+            worst = gnuValue(s, player)          -- opponent stuck, our roll next
+        else
+            -- pick which replies to net-evaluate: all of them, or the top few
+            -- by a quick heuristic screen (best for the opponent)
+            local pick, npick = replies, nrep
+            if nrep > GNU_OPP_KEEP then
+                for i = 1, nrep do
+                    local mv = replies[i].moves
+                    for j = 1, #mv do R.applyMove(s, opp, mv[j].from, mv[j].to, reply_undo[j]) end
+                    rep_scored[i] = { t = replies[i], v = evalPositional(s, opp) }
+                    for j = #mv, 1, -1 do R.undoMove(s, opp, reply_undo[j]) end
+                end
+                for i = nrep + 1, #rep_scored do rep_scored[i] = nil end
+                table.sort(rep_scored, function(x, y) return x.v > y.v end)
+                pick, npick = rep_scored, GNU_OPP_KEEP
+            end
+            for i = 1, npick do
+                local mv = (pick == replies) and pick[i].moves or pick[i].t.moves
+                for j = 1, #mv do R.applyMove(s, opp, mv[j].from, mv[j].to, reply_undo[j]) end
+                local v = gnuValue(s, player)    -- our roll next; opponent minimises this
+                for j = #mv, 1, -1 do R.undoMove(s, opp, reply_undo[j]) end
+                if not worst or v < worst then worst = v end
+            end
+        end
+        total = total + worst * w
+        wsum = wsum + w
+    end
+    return total / wsum
+end
+
+local function chooseTurnGNU(s, player, turns, ply)
+    if #turns == 1 then return turns[1].moves end
+    local opp = -player
+
+    -- 1-ply value of each candidate: after our move the opponent is on roll,
+    -- so our value is minus the opponent's equity there
+    local scored = {}
+    for i = 1, #turns do
+        local mv = turns[i].moves
+        for j = 1, #mv do R.applyMove(s, player, mv[j].from, mv[j].to, cand_undo[j]) end
+        local v = (R.winner(s) == player) and 3.0 or -gnuValue(s, opp)
+        for j = #mv, 1, -1 do R.undoMove(s, player, cand_undo[j]) end
+        scored[i] = { t = turns[i], v = v }
+    end
+
+    if (ply or 1) < 2 then
+        local best = scored[1]
+        for i = 2, #scored do if scored[i].v > best.v then best = scored[i] end end
+        return best.t.moves
+    end
+
+    -- 2-ply: look a full roll ahead for the strongest handful
+    table.sort(scored, function(x, y) return x.v > y.v end)
+    local keep = math.min(8, #scored)
+    local best, best_v
+    for i = 1, keep do
+        local mv = scored[i].t.moves
+        for j = 1, #mv do R.applyMove(s, player, mv[j].from, mv[j].to, cand_undo[j]) end
+        local v = (R.winner(s) == player) and 3.0 or opponentReplyValueGNU(s, player)
+        for j = #mv, 1, -1 do R.undoMove(s, player, cand_undo[j]) end
+        if not best_v or v > best_v then best, best_v = scored[i].t, v end
+    end
+    return best.moves
+end
+
 --- Pick the turn the computer will play.
 -- @return array of { from, to } moves (empty if the player has no legal move)
 function AI.chooseTurn(s, player, dice, ndice, level_id)
@@ -410,10 +538,17 @@ function AI.chooseTurn(s, player, dice, ndice, level_id)
         return turns[math.random(#turns)].moves
     end
 
+    if lv.eval == "gnu" then
+        gnu_nets = gnu_nets or GNU.load()
+        return chooseTurnGNU(s, player, turns, lv.ply or 1)
+    end
     if (lv.ply or 1) >= 2 then
         return chooseTurn2ply(s, player, turns, evaluator)
     end
     return chooseTurn1ply(s, player, turns, evaluator)
 end
+
+-- Let a caller supply pre-loaded nets (e.g. a test), else GNU.load() is used.
+function AI.setGnuNets(nets) gnu_nets = nets end
 
 return AI

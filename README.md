@@ -110,10 +110,14 @@ rather than rotating the whole device.
 
 ## Limitations
 
-- Two human players only, no computer opponent yet.
 - No doubling cube.
 - No undo once a checker is tapped into place.
 - Bearing off is always on the right; the side is not configurable.
 - Landscape is slower than portrait on e-ink; portrait is recommended.
 - Nothing is saved: closing the plugin discards the score and any game in
   progress.
+
+## License
+
+Licensed under GPL-3.0-or-later (see [LICENSE](LICENSE)). The Expert and Master
+levels use the neural network from GNU Backgammon; see [NOTICE.md](NOTICE.md).
