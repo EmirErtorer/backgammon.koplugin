@@ -20,6 +20,13 @@ local UIManager = require("ui/uimanager")
 local G = require("bg/game")
 local R = require("bg/rules")
 
+-- Blitbuffer.new allocates raw C memory (calloc) and registers no finalizer, so
+-- a buffer that is never :free()d leaks off-heap memory the Lua GC cannot
+-- reclaim. The offscreen board image is freed explicitly on close, and a GC
+-- finalizer is attached as a backstop so it can never leak even if a close path
+-- is ever missed.
+local ok_ffi, ffi = pcall(require, "ffi")
+
 local Screen = Device.screen
 local WHITE, BLACK, BAR, OFF = G.WHITE, G.BLACK, G.BAR, G.OFF
 
@@ -69,18 +76,28 @@ function BoardView:computeLayout()
     local avail_w = W - pad * 2
     local avail_h = H - L.top_h - L.bot_h - pad * 2
 
-    -- 15 columns wide: 12 points, a bar and a tray.
-    -- 11.2 checkers tall: five per point row plus the middle band.
+    -- The board is 15 columns wide (12 points, a bar, a tray) and 11.2 checkers
+    -- tall (five per point row plus the middle band). The checker size is
+    -- whichever of those two limits binds.
     local pw_from_w = avail_w / 15
     local pw_from_h = avail_h / 11.2
-    local pt_w = math.floor(math.min(pw_from_w, pw_from_h))
-    if pt_w < 12 then pt_w = 12 end
+    local checker_col = math.floor(math.min(pw_from_w, pw_from_h))
+    if checker_col < 12 then checker_col = 12 end
 
-    L.pt_w = pt_w
-    L.checker_r = math.floor((pt_w - 4) / 2)
+    L.checker_r = math.floor((checker_col - 4) / 2)
     local cd = L.checker_r * 2
+
+    -- When height is the binding limit (landscape), there is spare width: the
+    -- board at checker size would be narrower than the screen and float with
+    -- wide margins. Let each column grow to take up that slack, capped so the
+    -- triangle never dwarfs its checker. Portrait is width-bound, so this is a
+    -- no-op there and its layout is unchanged.
+    local pt_w = math.floor(math.min(pw_from_w, cd * 1.35))
+    if pt_w < checker_col then pt_w = checker_col end
+    L.pt_w = pt_w
+
     L.point_h = cd * 5
-    L.band_h = math.max(cd, math.floor(pt_w * 1.2))
+    L.band_h = math.max(cd, math.floor(cd * 1.2))
 
     -- On a tall screen the board would otherwise float in the middle with a
     -- lot of dead space. Real boards have points longer than the five checker
@@ -185,6 +202,11 @@ function BoardView:buildBoardBuffer()
     end
     local bb = Blitbuffer.new(L.board_w, L.board_h, Screen.bb:getType())
     self.board_bb = bb
+    if ok_ffi and type(bb) == "cdata" then
+        -- free() clears the allocated flag and cancels this finalizer, so an
+        -- explicit free followed by GC never double-frees.
+        ffi.gc(bb, bb.free)
+    end
 
     bb:fill(WHITE_C)
     bb:paintBorder(0, 0, L.board_w, L.board_h, L.frame, BLACK_C)
@@ -592,10 +614,7 @@ end
 function BoardView:relayout()
     self.dimen.w, self.dimen.h = Screen:getWidth(), Screen:getHeight()
     self:computeLayout()
-    if self.board_bb then
-        self.board_bb:free()
-        self.board_bb = nil     -- paintTo rebuilds it at the new size
-    end
+    self:free()     -- paintTo rebuilds the board image at the new size
 end
 
 function BoardView:onSetDimensions()
@@ -609,14 +628,23 @@ function BoardView:onShow()
     return true
 end
 
-function BoardView:onCloseWidget()
-    self.closing = true
+-- Release the one sizeable resource this widget owns. Safe to call more than
+-- once, and called from onCloseWidget below.
+function BoardView:free()
     if self.board_bb then
         self.board_bb:free()
         self.board_bb = nil
     end
-    -- the session score is deliberately not saved anywhere
+end
+
+function BoardView:onCloseWidget()
+    self.closing = true
+    self:free()
+    -- drop everything the widget holds so nothing lingers after it leaves the
+    -- window stack; the session score is deliberately not saved anywhere
     self.game = nil
+    self.L = nil
+    self.shown_dice = nil
     collectgarbage("collect")
 end
 
