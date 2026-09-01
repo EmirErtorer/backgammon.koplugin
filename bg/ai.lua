@@ -140,8 +140,9 @@ AI.levels = {
       ply = 1, eval = "pip",        blunder = 0.55 },
     { id = 2, name = "Casual",   desc = "Plays safe, punishes blots",
       ply = 1, eval = "positional", blunder = 0.10 },
+    { id = 3, name = "Skilled",  desc = "Looks a roll ahead, plays the odds",
+      ply = 2, eval = "positional", blunder = 0.0 },
     -- planned, not yet enabled:
-    -- { id = 3, name = "Skilled",  ply = 2, eval = "positional", blunder = 0.0 },
     -- { id = 4, name = "Expert",   ply = 1, eval = "gnu",        blunder = 0.0 },
     -- { id = 5, name = "Master",   ply = 2, eval = "gnu",        blunder = 0.0 },
 }
@@ -293,6 +294,107 @@ local function scoreTurn(s, player, moves, evaluator)
     return v
 end
 
+local function chooseTurn1ply(s, player, turns, evaluator)
+    local best, best_score = turns[1], scoreTurn(s, player, turns[1].moves, evaluator)
+    for i = 2, #turns do
+        local v = scoreTurn(s, player, turns[i].moves, evaluator)
+        if v > best_score then
+            best, best_score = turns[i], v
+        end
+    end
+    return best.moves
+end
+
+--------------------------------------------------------------------------
+-- 2-ply search: value a candidate by the opponent's best reply, averaged over
+-- every roll they might make. Twice as expensive per level of look-ahead, so a
+-- move filter keeps only the most promising candidates before looking deeper --
+-- the same idea gnubg uses.
+--------------------------------------------------------------------------
+
+-- The 21 distinct dice combinations, with the weight each carries out of 36
+-- (doubles happen one way, other rolls two). Doubles give four dice to play.
+local ROLLS = {}
+for a = 1, 6 do
+    for b = a, 6 do
+        ROLLS[#ROLLS + 1] = { a, b, (a == b) and 4 or 2, (a == b) and 1 or 2 }
+    end
+end
+
+-- separate undo buffers per search layer, so applying the candidate and the
+-- opponent's reply never share scratch space
+local cand_undo = {}
+for i = 1, 4 do cand_undo[i] = { from = 0, to = 0, hit = false } end
+local reply_undo = {}
+for i = 1, 4 do reply_undo[i] = { from = 0, to = 0, hit = false } end
+local roll_dice = { 0, 0, 0, 0 }
+
+local PLY2_WIN = 1e6      -- a move that wins outright dominates any evaluation
+
+-- Expected value to `me` of a position where the opponent rolls next: for each
+-- roll, the opponent plays the reply that is worst for `me`; average over rolls.
+local function opponentReplyValue(s, me, evaluator)
+    local opp = -me
+    local total, wsum = 0, 0
+    for ri = 1, #ROLLS do
+        local rc = ROLLS[ri]
+        local a, b, ndice, w = rc[1], rc[2], rc[3], rc[4]
+        if ndice == 4 then
+            roll_dice[1], roll_dice[2], roll_dice[3], roll_dice[4] = a, a, a, a
+        else
+            roll_dice[1], roll_dice[2] = a, b
+        end
+        local replies = AI.enumerateTurns(s, opp, roll_dice, ndice)
+        local worst           -- min over replies of eval(.., me)
+        if #replies == 0 then
+            worst = evaluator(s, me)          -- opponent is stuck, no move
+        else
+            for i = 1, #replies do
+                local mv = replies[i].moves
+                for j = 1, #mv do
+                    R.applyMove(s, opp, mv[j].from, mv[j].to, reply_undo[j])
+                end
+                local v = (R.winner(s) == opp) and -PLY2_WIN or evaluator(s, me)
+                for j = #mv, 1, -1 do
+                    R.undoMove(s, opp, reply_undo[j])
+                end
+                if not worst or v < worst then worst = v end
+            end
+        end
+        total = total + worst * w
+        wsum = wsum + w
+    end
+    return total / wsum
+end
+
+local function chooseTurn2ply(s, player, turns, evaluator)
+    if #turns == 1 then return turns[1].moves end
+
+    -- 1-ply screen: rank every candidate, keep the strongest few
+    local scored = {}
+    for i = 1, #turns do
+        scored[i] = { t = turns[i], v = scoreTurn(s, player, turns[i].moves, evaluator) }
+    end
+    table.sort(scored, function(x, y) return x.v > y.v end)
+    local keep = math.min(8, #scored)
+
+    -- look a full roll ahead for the survivors
+    local best, best_v
+    for i = 1, keep do
+        local mv = scored[i].t.moves
+        for j = 1, #mv do
+            R.applyMove(s, player, mv[j].from, mv[j].to, cand_undo[j])
+        end
+        local v = (R.winner(s) == player) and PLY2_WIN
+                  or opponentReplyValue(s, player, evaluator)
+        for j = #mv, 1, -1 do
+            R.undoMove(s, player, cand_undo[j])
+        end
+        if not best_v or v > best_v then best, best_v = scored[i].t, v end
+    end
+    return best.moves
+end
+
 --- Pick the turn the computer will play.
 -- @return array of { from, to } moves (empty if the player has no legal move)
 function AI.chooseTurn(s, player, dice, ndice, level_id)
@@ -308,14 +410,10 @@ function AI.chooseTurn(s, player, dice, ndice, level_id)
         return turns[math.random(#turns)].moves
     end
 
-    local best, best_score = turns[1], scoreTurn(s, player, turns[1].moves, evaluator)
-    for i = 2, #turns do
-        local v = scoreTurn(s, player, turns[i].moves, evaluator)
-        if v > best_score then
-            best, best_score = turns[i], v
-        end
+    if (lv.ply or 1) >= 2 then
+        return chooseTurn2ply(s, player, turns, evaluator)
     end
-    return best.moves
+    return chooseTurn1ply(s, player, turns, evaluator)
 end
 
 return AI

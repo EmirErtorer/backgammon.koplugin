@@ -20,17 +20,23 @@ function Backgammon:addToMainMenu(menu_items)
         keep_menu_open = false,
         callback = function()
             -- open the setup screen; it starts the board once an opponent and
-            -- difficulty are chosen
+            -- difficulty are chosen. openSetup is reused by the board's "Menu"
+            -- button so abandoning a game returns to a fresh picker.
             local SetupView = require("bg/setupview")
             local BoardView = require("bg/boardview")
-            UIManager:show(SetupView:new{
-                on_start = function(opponent, level)
-                    UIManager:show(BoardView:new{
-                        opponent = opponent,
-                        ai_level = level,
-                    })
-                end,
-            })
+            local openSetup
+            openSetup = function()
+                UIManager:show(SetupView:new{
+                    on_start = function(opponent, level)
+                        UIManager:show(BoardView:new{
+                            opponent = opponent,
+                            ai_level = level,
+                            on_menu = openSetup,
+                        })
+                    end,
+                })
+            end
+            openSetup()
         end,
     }
 end

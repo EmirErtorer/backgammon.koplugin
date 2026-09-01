@@ -176,6 +176,12 @@ function BoardView:computeLayout()
     if rot < 24 then rot = 24 end
     L.rotate_btn = rect(pad * 2, math.floor((L.top_h - rot) / 2), rot, rot)
 
+    -- "Menu" button, top-right of the header (mirrors the rotate toggle on the
+    -- left; the scoreboard is centred, so this corner is free). It abandons the
+    -- current game and returns to the opponent picker.
+    local menu_w = math.min(math.floor(rot * 2.4), math.floor(W * 0.26))
+    L.menu_btn = rect(W - menu_w - pad * 2, math.floor((L.top_h - rot) / 2), menu_w, rot)
+
     local btn_w = math.floor(W * 0.30)
     local side_w = math.floor(btn_w * 0.6)
     local btn_h = L.bot_h - text_h - pad * 2
@@ -539,6 +545,12 @@ function BoardView:paintChrome(bb)
     self:centreText(bb, L.new_btn, L.face_small, "New game")
 
     self:drawRotateIcon(bb, L.rotate_btn)
+
+    -- return-to-menu button, only when the caller gave us somewhere to go back to
+    if self.on_menu and L.menu_btn then
+        bb:paintBorder(L.menu_btn.x, L.menu_btn.y, L.menu_btn.w, L.menu_btn.h, 2, BLACK_C, 6)
+        self:centreText(bb, L.menu_btn, L.face_small, "Menu")
+    end
 end
 
 -- Two overlapping rectangles, one portrait and one landscape, which reads as an
@@ -741,6 +753,17 @@ function BoardView:onClose()
     return true
 end
 
+-- Abandon the current game and hand control back to the opponent picker.
+-- Closing the board first runs onCloseWidget, which unschedules the computer's
+-- pending moves, frees the board image, restores the screen orientation and
+-- drops all game state -- so nothing from the abandoned game keeps running or
+-- holds memory once we reopen the menu.
+function BoardView:goToMenu()
+    local on_menu = self.on_menu
+    UIManager:close(self)
+    if on_menu then on_menu() end
+end
+
 --------------------------------------------------------------------------
 -- input
 --------------------------------------------------------------------------
@@ -749,9 +772,14 @@ function BoardView:onTap(_, ges)
     local x, y = ges.pos.x, ges.pos.y
     local L, g = self.L, self.game
 
-    -- while the computer is rolling/moving, only Close responds
+    -- while the computer is rolling/moving, only Close and Menu respond, so the
+    -- game can still be closed or abandoned mid-turn
     if self.ai_busy then
-        if inRect(L.close_btn, x, y) then UIManager:close(self) end
+        if inRect(L.close_btn, x, y) then
+            UIManager:close(self)
+        elseif self.on_menu and L.menu_btn and inRect(L.menu_btn, x, y) then
+            self:goToMenu()
+        end
         return true
     end
 
@@ -771,6 +799,10 @@ function BoardView:onTap(_, ges)
     end
     if L.rotate_btn and inRect(L.rotate_btn, x, y) then
         self:toggleOrientation()
+        return true
+    end
+    if self.on_menu and L.menu_btn and inRect(L.menu_btn, x, y) then
+        self:goToMenu()
         return true
     end
 
@@ -1005,16 +1037,10 @@ function BoardView:aiRoll()
         UIManager:scheduleIn(AI_DELAY_PASS, self._ai_after_pass)
         return
     end
-    local AI = require("bg/ai")
-    self.ai_moves = AI.chooseTurn(g.state, g.player, g.dice, g.ndice, self.ai_level)
+    -- the move is chosen lazily, in the first step, so that a heavier level's
+    -- thinking does not hold up painting the dice that were just rolled
+    self.ai_moves = nil
     self.ai_i = 0
-    if #self.ai_moves == 0 then
-        g.message = "Computer can't move"
-        self:refreshTop()
-        self:refreshBottom()
-        UIManager:scheduleIn(AI_DELAY_PASS, self._ai_after_pass)
-        return
-    end
     UIManager:scheduleIn(AI_DELAY_FIRST, self._ai_step)
 end
 
@@ -1031,6 +1057,19 @@ end
 function BoardView:aiStep()
     if self.closing then return end
     local g = self.game
+    -- choose the whole turn on the first step (see aiRoll)
+    if not self.ai_moves then
+        local AI = require("bg/ai")
+        self.ai_moves = AI.chooseTurn(g.state, g.player, g.dice, g.ndice, self.ai_level)
+        if #self.ai_moves == 0 then
+            -- defensive: a real dead roll is already handled at roll time
+            g.message = "Computer can't move"
+            self:refreshTop()
+            self:refreshBottom()
+            UIManager:scheduleIn(AI_DELAY_PASS, self._ai_after_pass)
+            return
+        end
+    end
     self.ai_i = self.ai_i + 1
     local mv = self.ai_moves[self.ai_i]
     if not mv then
