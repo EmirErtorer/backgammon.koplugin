@@ -334,6 +334,13 @@ end
 print("-- allocation behaviour")
 --------------------------------------------------------------------------
 do
+    -- Measure with the JIT off: collectgarbage("count") also reports LuaJIT's
+    -- trace cache, which grows and flushes in a sawtooth worth tens of KB and
+    -- would otherwise make this assertion flaky. With the JIT off the figure is
+    -- real Lua allocation.
+    local had_jit = jit ~= nil
+    if had_jit then jit.off() end
+
     local s = R.setupStart(R.newState())
     local dice = { 6, 5 }
     R.analyse(s, WHITE, dice, 2)      -- warm up
@@ -344,19 +351,25 @@ do
     end
     local after = collectgarbage("count")
     local grew = after - before
-    ok(grew < 16, ("analyse() allocates almost nothing: heap grew %.1f KB over 20000 calls"):format(grew))
+    ok(grew < 4, ("analyse() allocates almost nothing: heap grew %.1f KB over 20000 calls"):format(grew))
     print(("   heap grew %.1f KB over 20000 analyse() calls"):format(grew))
 
     local dice4 = { 6, 6, 6, 6 }
     R.analyse(s, WHITE, dice4, 4)
     collectgarbage("collect")
     before = collectgarbage("count")
+    for _ = 1, 5000 do
+        R.analyse(s, WHITE, dice4, 4)
+    end
+    after = collectgarbage("count")
+    if had_jit then jit.on() end
+
+    -- time it separately, JIT on, since timing is what the JIT is for
     local t0 = os.clock()
     for _ = 1, 5000 do
         R.analyse(s, WHITE, dice4, 4)
     end
     local el = os.clock() - t0
-    after = collectgarbage("count")
     print(("   doubles: %.1f KB over 5000 calls, %.3f ms per call"):format(after - before, el * 1000 / 5000))
 end
 

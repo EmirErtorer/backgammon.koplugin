@@ -158,18 +158,27 @@ function BoardView:computeLayout()
     if die_size < 12 then die_size = 12 end
     local four_w = die_size * 4 + math.floor(die_size * 0.35) * 3
     local dice_w = math.min(four_w + die_size, inner_w)
-    L.dice_area = rect(ix + math.floor((inner_w - dice_w) / 2), L.band_y, dice_w, L.band_h)
+    -- The dice group is centred on the spine (the middle of the bar), so the
+    -- gap between the two dice lands dead centre. The refresh box is centred the
+    -- same way, then nudged inside the board if it would overhang an edge.
+    L.spine_x = L.bar_x + math.floor(L.bar_w / 2)
+    local da_x = L.spine_x - math.floor(dice_w / 2)
+    if da_x < ix then da_x = ix end
+    if da_x + dice_w > ix + inner_w then da_x = ix + inner_w - dice_w end
+    L.dice_area = rect(da_x, L.band_y, dice_w, L.band_h)
 
     L.top_bar = rect(0, 0, W, L.top_h)
     L.msg = rect(0, H - L.bot_h, W, text_h + pad)
 
     local btn_w = math.floor(W * 0.30)
+    local side_w = math.floor(btn_w * 0.6)
     local btn_h = L.bot_h - text_h - pad * 2
     if btn_h < text_h + pad then btn_h = text_h + pad end
-    L.roll_btn = rect(math.floor(W / 2 - btn_w / 2), H - btn_h - pad, btn_w, btn_h)
-    L.close_btn = rect(W - btn_w - pad, H - btn_h - pad,
-                       math.floor(btn_w * 0.6), btn_h)
-    L.new_btn = rect(pad, H - btn_h - pad, math.floor(btn_w * 0.6), btn_h)
+    local btn_y = H - btn_h - pad
+    -- Roll centred; New game and Close the same distance from their corners.
+    L.roll_btn = rect(math.floor(W / 2 - btn_w / 2), btn_y, btn_w, btn_h)
+    L.new_btn = rect(pad, btn_y, side_w, btn_h)
+    L.close_btn = rect(W - side_w - pad, btn_y, side_w, btn_h)
 
     -- Font:getFace runs the size through Screen:scaleBySize, so divide the
     -- pixel height we actually want by that factor or high dpi screens get
@@ -433,7 +442,7 @@ function BoardView:paintDice(bb)
     local L, g = self.L, self.game
     local size = math.min(math.floor(L.band_h * 0.7), math.floor(L.pt_w * 1.1))
     if size < 12 then size = 12 end
-    local cx = L.inner_x + math.floor(L.inner_w / 2)
+    local cx = L.spine_x
     local y = L.band_y + math.floor((L.band_h - size) / 2)
 
     -- opening: one die per player until the starter rolls for real
