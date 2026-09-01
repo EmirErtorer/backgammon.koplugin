@@ -489,6 +489,12 @@ function BoardView:paintChrome(bb)
         turn = g.message or "Game over"
     elseif g.phase == "opening" then
         turn = g.message or "Roll to see who starts"
+    elseif self.ai_side then
+        if g.player == self.ai_side then
+            turn = self.ai_busy and "Computer is thinking…" or "Computer's turn"
+        else
+            turn = "Your turn"
+        end
     else
         turn = ((g.player == WHITE) and "White" or "Black") .. " to play"
     end
@@ -627,6 +633,15 @@ function BoardView:init()
     self.last_message = nil
     self.orig_rotation = Screen.getRotationMode and Screen:getRotationMode() or nil
 
+    -- opponent: "human" (two players) or "ai". When "ai", the human plays White
+    -- (bottom) and the computer plays Black (top).
+    self.opponent = self.opponent or "human"
+    self.ai_side = (self.opponent == "ai") and BLACK or nil
+    self.ai_level = self.ai_level or 1
+    self.ai_busy = false
+    self.ai_moves = nil
+    self.ai_i = 0
+
     self:computeLayout()
 
     -- InputContainer:_init has already made these tables and may have put a
@@ -638,6 +653,10 @@ function BoardView:init()
         self.key_events.Close = { { Device.input.group.Back } }
     end
 
+    -- bound once; the computer's turn advances through these scheduled steps
+    self._ai_roll = function() self:aiRoll() end
+    self._ai_step = function() self:aiStep() end
+    self._ai_after_pass = function() self:aiAfterPass() end
 end
 
 -- Rebuild for a new screen size, keeping the game in progress. self.dimen is
@@ -695,6 +714,11 @@ end
 
 function BoardView:onCloseWidget()
     self.closing = true
+    if UIManager.unschedule then
+        if self._ai_roll then UIManager:unschedule(self._ai_roll) end
+        if self._ai_step then UIManager:unschedule(self._ai_step) end
+        if self._ai_after_pass then UIManager:unschedule(self._ai_after_pass) end
+    end
     -- put the device back the way it was before the game opened, and force a
     -- full-screen refresh so the panel is left clean (and, on devices where
     -- landscape uses software rotation, back on the native fast path)
@@ -724,6 +748,12 @@ end
 function BoardView:onTap(_, ges)
     local x, y = ges.pos.x, ges.pos.y
     local L, g = self.L, self.game
+
+    -- while the computer is rolling/moving, only Close responds
+    if self.ai_busy then
+        if inRect(L.close_btn, x, y) then UIManager:close(self) end
+        return true
+    end
 
     if inRect(L.close_btn, x, y) then
         UIManager:close(self)
@@ -850,6 +880,7 @@ function BoardView:onRollButton()
         self:refreshEach("fast", self.L.dice_area)
         self:refreshTop()
         self:refreshBottom()
+        self:maybeStartAI()
         return
     end
 
@@ -859,6 +890,7 @@ function BoardView:onRollButton()
         -- dice first, with the quick waveform, so they appear without lag
         self:refreshEach("fast", self.L.dice_area)
         self:refreshBottom()
+        self:maybeStartAI()
         return
     end
 
@@ -914,9 +946,116 @@ function BoardView:playMove(to)
         g:passTurn()
         self:refreshTop()
         self:refreshBottom()
+        self:maybeStartAI()
     elseif self.last_message ~= g.message then
         self:refreshBottom()
     end
+end
+
+--------------------------------------------------------------------------
+-- computer opponent
+--------------------------------------------------------------------------
+
+-- Screen rect for a point / the bar / the tray, from `player`'s side.
+function BoardView:rectFor(point, player)
+    local L = self.L
+    if point == BAR then return (player == WHITE) and L.bar_white or L.bar_black end
+    if point == OFF then return (player == WHITE) and L.tray_white or L.tray_black end
+    return L.point[point]
+end
+
+-- If it is the computer's turn to roll, start its turn after a short beat so
+-- the human sees the handover. A no-op in two-player games.
+function BoardView:maybeStartAI()
+    if self.closing or not self.ai_side or self.ai_busy then return end
+    local g = self.game
+    if g.phase == "roll" and g.player == self.ai_side then
+        self.ai_busy = true
+        self:refreshTop()
+        UIManager:scheduleIn(0.4, self._ai_roll)
+    end
+end
+
+function BoardView:aiRoll()
+    if self.closing then return end
+    local g = self.game
+    if g.phase ~= "roll" or g.player ~= self.ai_side then
+        self.ai_busy = false
+        return
+    end
+    local what = g:roll()
+    self:clearDice()
+    for i = 1, g.ndice do self.shown_dice[i] = g.dice[i] end
+    self:refreshEach("fast", self.L.dice_area)
+    self:refreshTop()
+    if what == "pass" then
+        self:refreshBottom()
+        UIManager:scheduleIn(0.9, self._ai_after_pass)
+        return
+    end
+    local AI = require("bg/ai")
+    self.ai_moves = AI.chooseTurn(g.state, g.player, g.dice, g.ndice, self.ai_level)
+    self.ai_i = 0
+    if #self.ai_moves == 0 then
+        UIManager:scheduleIn(0.9, self._ai_after_pass)
+        return
+    end
+    UIManager:scheduleIn(0.6, self._ai_step)
+end
+
+function BoardView:aiAfterPass()
+    if self.closing then return end
+    self.game:passTurn()
+    self.ai_busy = false
+    self:refreshTop()
+    self:refreshBottom()
+    self:maybeStartAI()
+end
+
+function BoardView:aiStep()
+    if self.closing then return end
+    local g = self.game
+    self.ai_i = self.ai_i + 1
+    local mv = self.ai_moves[self.ai_i]
+    if not mv then
+        self.ai_busy = false
+        return
+    end
+    local res = self:applyAIMove(mv.from, mv.to)
+    if res == "won" then
+        self.ai_busy = false
+        return
+    end
+    if res == nil or res == "turn_over" then
+        g:passTurn()
+        self.ai_busy = false
+        self:refreshTop()
+        self:refreshBottom()
+        self:maybeStartAI()
+        return
+    end
+    -- more of the computer's moves to play, one at a time so they are followable
+    UIManager:scheduleIn(0.5, self._ai_step)
+end
+
+-- Apply one computer move and refresh it the same way a human move is refreshed.
+function BoardView:applyAIMove(from, to)
+    local g, L = self.game, self.L
+    local player = g.player
+    local from_r = self:rectFor(from, player)
+    local to_r = self:rectFor(to, player)
+    local res = g:moveDirect(from, to)
+    self:clearDice()
+    for i = 1, g.ndice do self.shown_dice[i] = g.dice[i] end
+    if res == "won" then
+        UIManager:setDirty(self, "flashui")
+        return res
+    end
+    local hit_r = g.last_hit
+        and ((player == WHITE) and L.bar_black or L.bar_white)
+        or nil
+    self:refreshRects("ui", from_r, to_r, hit_r, L.dice_area)
+    return res
 end
 
 return BoardView

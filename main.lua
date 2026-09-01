@@ -1,4 +1,4 @@
--- Backgammon (tavla) for KOReader. Two players, one device.
+-- Backgammon (tavla) for KOReader. Two players or vs the computer, one device.
 
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -19,8 +19,18 @@ function Backgammon:addToMainMenu(menu_items)
         sorting_hint = "more_tools",
         keep_menu_open = false,
         callback = function()
+            -- open the setup screen; it starts the board once an opponent and
+            -- difficulty are chosen
+            local SetupView = require("bg/setupview")
             local BoardView = require("bg/boardview")
-            UIManager:show(BoardView:new{})
+            UIManager:show(SetupView:new{
+                on_start = function(opponent, level)
+                    UIManager:show(BoardView:new{
+                        opponent = opponent,
+                        ai_level = level,
+                    })
+                end,
+            })
         end,
     }
 end

@@ -215,6 +215,13 @@ function Game:move(to)
     return "turn_over"
 end
 
+-- Apply a specific (from, to) move, e.g. one the computer chose. Reuses the
+-- same path as a tapped human move (die consumption, win/turn detection).
+function Game:moveDirect(from, to)
+    self.selected = from
+    return self:move(to)
+end
+
 function Game:pipCount(player)
     return R.pipCount(self.state, player)
 end
