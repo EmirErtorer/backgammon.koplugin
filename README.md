@@ -1,12 +1,13 @@
 # Backgammon for KOReader
 
-A two-player backgammon (tavla) board for [KOReader](https://github.com/koreader/koreader).
-Both players share one device and take turns on the same screen.
+A backgammon (tavla) board for [KOReader](https://github.com/koreader/koreader).
+Play another person on the same device, or take on the computer at one of five
+difficulty levels — from a loose beginner to a neural-net master.
 
 Built for e-ink: flat greys instead of textures, checkers told apart by shape as
 well as shade, and small screen refreshes so play stays responsive.
 
-- Two players on one device
+- Two players on one device, or a computer opponent with five difficulty levels
 - Full standard rules: hitting, the bar, bearing off, forced moves, doubles
 - Tap to select a checker, tap a highlighted point to move — no dragging
 - Session scoreboard with 1 / 2 / 3 point scoring (mars and backgammon)
@@ -38,6 +39,10 @@ It then appears in the file browser under the **Tools** menu as **Backgammon**.
 
 ## How to play
 
+**Choosing an opponent.** Opening Backgammon shows a setup screen: pick **Two
+players** or **Play the computer** (and a difficulty), then **Start game**. You
+can return here any time with the **Menu** button in the top-right of the board.
+
 **Starting.** Press **Roll**. The first roll is not a turn: each side gets one
 die and the higher one starts, rerolling on a tie. The message line states the
 result, for example *"White 5, Black 3. White starts, roll again"*. The
@@ -58,6 +63,25 @@ only. It resets to zero each time the plugin is opened and is never saved.
 
 **Orientation.** The button in the top-left of the header flips the board
 between portrait and landscape without physically rotating the device.
+
+## Opponents
+
+Levels differ in both how far ahead they look and how well they judge a
+position:
+
+- **1 · Beginner** — plays mostly by the pip race and leaves easy shots. A gentle
+  start for learning the game.
+- **2 · Casual** — plays safely and punishes loose blots, but only one move deep.
+- **3 · Skilled** — looks a full roll ahead and plays the percentages. Clearly
+  beats Casual.
+- **4 · Expert** — uses GNU Backgammon's neural network for world-class
+  positional judgement. A big jump up from Skilled.
+- **5 · Master** — the same neural network, looking a full roll ahead. The
+  strongest, and the slowest to move (a couple of seconds on e-ink).
+
+Levels 1–3 are hand-written heuristics; levels 4–5 use the neural network from
+GNU Backgammon (see [NOTICE.md](NOTICE.md)). The computer pauses briefly between
+its moves so you can follow what it played.
 
 ## Rules
 
