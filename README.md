@@ -13,8 +13,10 @@ well as shade, and small screen refreshes so play stays responsive.
 - Portrait and landscape, switchable from a button in-game
 - Pure Lua, no external dependencies, nothing written to disk
 
-Not included: an AI opponent, online play, and the doubling cube. Every game is
-two humans.
+<img width="1448" height="1072" alt="backgammon_landscape" src="https://github.com/user-attachments/assets/ff82c57c-c1fc-49a2-a6fc-17443ca15987" />
+<img width="1072" height="1448" alt="backgammon_portrait" src="https://github.com/user-attachments/assets/89d08650-7cf1-47af-a394-4e38bc3aa3ac" />
+
+
 
 ## Requirements
 
