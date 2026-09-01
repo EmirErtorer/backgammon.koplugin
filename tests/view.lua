@@ -494,6 +494,65 @@ do
     UIManager:close(v)
 end
 
+--------------------------------------------------------------------------
+print("-- in-plugin orientation toggle")
+--------------------------------------------------------------------------
+do
+    local Device = require("device")
+    Device.screen.setSize(1072, 1448)          -- start in portrait
+    ok(Device.screen.getScreenMode() == "portrait", "starts in portrait")
+    local v = BoardView:new{}
+    ok(v.L.rotate_btn ~= nil, "the layout has a rotate button")
+    local port_board_w = v.L.board_w
+
+    -- get a game going so we can confirm state survives a toggle
+    while v.game.phase == "opening" do tap(v, v.L.roll_btn) end
+    tap(v, v.L.roll_btn)
+    local pip = v.game:pipCount(WHITE)
+    local phase = v.game.phase
+
+    -- toggle to landscape via the button
+    tap(v, v.L.rotate_btn)
+    eq(Device.screen.getScreenMode(), "landscape", "the button switches to landscape")
+    ok(Device.screen.getWidth() > Device.screen.getHeight(), "the screen is landscape now")
+    ok(v.L.board_w ~= port_board_w, "the board re-laid-out for the new orientation")
+    eq(v.game:pipCount(WHITE), pip, "the game in progress survived the toggle")
+    eq(v.game.phase, phase, "the phase is unchanged by the toggle")
+
+    -- and it paints cleanly at the new orientation
+    local sbb = BB.new(Device.screen.getWidth(), Device.screen.getHeight())
+    BB.out_of_bounds = 0
+    v:paintTo(sbb, 0, 0)
+    eq(BB.out_of_bounds, 0, "paints inside bounds after the toggle")
+
+    -- taps still land on the right points after the toggle
+    local wrong = 0
+    for p = 1, 24 do
+        if v:hitPoint(centre(v.L.point[p])) ~= p then wrong = wrong + 1 end
+    end
+    eq(wrong, 0, "hit testing is correct in the toggled orientation")
+
+    -- toggle back
+    tap(v, v.L.rotate_btn)
+    eq(Device.screen.getScreenMode(), "portrait", "toggling again returns to portrait")
+    UIManager:close(v)
+    Device.screen.setSize(1448, 1072)
+end
+
+--------------------------------------------------------------------------
+print("-- closing restores the original orientation")
+--------------------------------------------------------------------------
+do
+    local Device = require("device")
+    Device.screen.setSize(1072, 1448)          -- portrait
+    local v = BoardView:new{}
+    tap(v, v.L.rotate_btn)                      -- switch to landscape
+    ok(Device.screen.getScreenMode() == "landscape", "switched to landscape for the game")
+    UIManager:close(v)
+    eq(Device.screen.getScreenMode(), "portrait", "close puts the device back to portrait")
+    Device.screen.setSize(1448, 1072)
+end
+
 print()
 if failures == 0 then
     print(("ALL OK: %d checks passed"):format(checks))

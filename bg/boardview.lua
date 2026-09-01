@@ -170,6 +170,12 @@ function BoardView:computeLayout()
     L.top_bar = rect(0, 0, W, L.top_h)
     L.msg = rect(0, H - L.bot_h, W, text_h + pad)
 
+    -- orientation toggle, top-left of the header (the scoreboard is centred, so
+    -- this corner is free and clear of the right-hand pip counts)
+    local rot = math.min(math.floor(L.top_h * 0.6), math.floor(math.min(W, H) * 0.09))
+    if rot < 24 then rot = 24 end
+    L.rotate_btn = rect(pad * 2, math.floor((L.top_h - rot) / 2), rot, rot)
+
     local btn_w = math.floor(W * 0.30)
     local side_w = math.floor(btn_w * 0.6)
     local btn_h = L.bot_h - text_h - pad * 2
@@ -525,6 +531,21 @@ function BoardView:paintChrome(bb)
     self:centreText(bb, L.close_btn, L.face_small, "Close")
     bb:paintBorder(L.new_btn.x, L.new_btn.y, L.new_btn.w, L.new_btn.h, 2, BLACK_C, 6)
     self:centreText(bb, L.new_btn, L.face_small, "New game")
+
+    self:drawRotateIcon(bb, L.rotate_btn)
+end
+
+-- Two overlapping rectangles, one portrait and one landscape, which reads as an
+-- orientation toggle without needing a font glyph.
+function BoardView:drawRotateIcon(bb, r)
+    bb:paintRoundedRect(r.x, r.y, r.w, r.h, WHITE_C, 4)
+    bb:paintBorder(r.x, r.y, r.w, r.h, 2, BLACK_C, 4)
+    local cx = r.x + math.floor(r.w / 2)
+    local cy = r.y + math.floor(r.h / 2)
+    local a = math.floor(r.w * 0.30)   -- short side
+    local b = math.floor(r.w * 0.50)   -- long side
+    bb:paintBorder(cx - math.floor(a / 2), cy - math.floor(b / 2), a, b, 2, BLACK_C, 2)
+    bb:paintBorder(cx - math.floor(b / 2), cy - math.floor(a / 2), b, a, 2, BLACK_C, 2)
 end
 
 function BoardView:clearDice()
@@ -604,6 +625,7 @@ function BoardView:init()
     self.shown_dice = {}
     self.closing = false
     self.last_message = nil
+    self.orig_rotation = Screen.getRotationMode and Screen:getRotationMode() or nil
 
     self:computeLayout()
 
@@ -620,6 +642,31 @@ end
 
 -- Rebuild for a new screen size, keeping the game in progress. self.dimen is
 -- mutated rather than replaced because the tap GestureRange holds it.
+-- Flip the board between portrait and landscape from a button, rather than by
+-- physically rotating the device. This goes straight through KOReader's screen
+-- rotation and re-lays-out only this widget; the file manager underneath is left
+-- alone and the original orientation is restored on close. The point is to skip
+-- the accelerometer / auto-rotate path, which is what bogs the panel down when a
+-- device is flipped back and forth.
+function BoardView:toggleOrientation()
+    if not (Screen.setRotationMode and Screen.getRotationMode) then return end
+    local cur = Screen:getRotationMode()
+    local target
+    if cur % 2 == 1 then
+        -- currently landscape -> upright portrait
+        target = Screen.DEVICE_ROTATED_UPRIGHT or 0
+    else
+        -- currently portrait -> counter-clockwise landscape, so the device's
+        -- bottom bezel (the logo) ends up on the right
+        target = Screen.DEVICE_ROTATED_COUNTER_CLOCKWISE or 3
+    end
+    Screen:setRotationMode(target)
+    self:relayout()
+    -- a full refresh draws the new orientation and clears the panel at the same
+    -- time, which is exactly when a full refresh is worth its cost
+    UIManager:setDirty(self, "full")
+end
+
 function BoardView:relayout()
     self.dimen.w, self.dimen.h = Screen:getWidth(), Screen:getHeight()
     self:computeLayout()
@@ -648,6 +695,14 @@ end
 
 function BoardView:onCloseWidget()
     self.closing = true
+    -- put the device back the way it was before the game opened, and force a
+    -- full-screen refresh so the panel is left clean (and, on devices where
+    -- landscape uses software rotation, back on the native fast path)
+    if self.orig_rotation ~= nil and Screen.setRotationMode
+        and Screen:getRotationMode() ~= self.orig_rotation then
+        Screen:setRotationMode(self.orig_rotation)
+    end
+    UIManager:setDirty(nil, "full")
     self:free()
     -- drop everything the widget holds so nothing lingers after it leaves the
     -- window stack; the session score is deliberately not saved anywhere
@@ -682,6 +737,10 @@ function BoardView:onTap(_, ges)
     end
     if inRect(L.roll_btn, x, y) then
         self:onRollButton()
+        return true
+    end
+    if L.rotate_btn and inRect(L.rotate_btn, x, y) then
+        self:toggleOrientation()
         return true
     end
 

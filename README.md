@@ -3,15 +3,14 @@
 A two-player backgammon (tavla) board for [KOReader](https://github.com/koreader/koreader).
 Both players share one device and take turns on the same screen.
 
-It is built for e-ink: flat greys instead of textures, checkers told apart by
-shape as well as shade, and small screen refreshes so play stays responsive on
-slow panels.
+Built for e-ink: flat greys instead of textures, checkers told apart by shape as
+well as shade, and small screen refreshes so play stays responsive.
 
-- Two human players, hot-seat on one device
+- Two players on one device, no AI opponent yet
 - Full standard rules: hitting, the bar, bearing off, forced moves, doubles
 - Tap to select a checker, tap a highlighted point to move — no dragging
 - Session scoreboard with 1 / 2 / 3 point scoring (mars and backgammon)
-- Works in portrait and landscape, and adapts to any screen size
+- Portrait and landscape, switchable from a button in-game
 - Pure Lua, no external dependencies, nothing written to disk
 
 Not included: an AI opponent, online play, and the doubling cube. Every game is
@@ -55,6 +54,9 @@ changes to **Continue** to hand over.
 only. It resets to zero each time the plugin is opened and is never saved.
 **New game** deals a fresh board and keeps the running score; **Close** exits.
 
+**Orientation.** The button in the top-left of the header flips the board
+between portrait and landscape without physically rotating the device.
+
 ## Rules
 
 The starting position is the standard one: two checkers on the 24 point, five
@@ -82,41 +84,27 @@ the top right.
 - **3 points** when the loser has borne off none and still has a checker inside
   the winner's home board.
 
-A checker sitting on the bar counts as being in the winner's home board for the
-3-point case, since that is where it would have to re-enter. This is controlled
-by a single line in `bg/rules.lua` for anyone who prefers a different house
-rule.
-
 ### A note on legal moves
 
 Whether a move is legal can depend on the rest of the turn, not just one die.
-The "both dice must be played if possible" rule means a move that looks fine on
-its own can be illegal if playing it would strand the other die when a
-different order would have used both. The plugin works this out by searching
-the full turn and only offering moves that begin a longest possible sequence,
-so the highlighted moves are always the legal ones — occasionally fewer than
-expected.
+Because both dice must be played when possible, a move that looks fine on its
+own can be illegal if it would strand the other die. The highlighted moves are
+always the legal ones — occasionally fewer than expected.
 
-## Design notes
+## Orientation and performance
 
-**Display.** The board uses flat greys rather than wood textures or gradients,
-which ghost badly on e-ink. Checkers are distinguished by shape as well as
-shade (white is a light disc in a heavy dark ring, black is a solid disc with a
-light inner ring), so they stay legible even on low-contrast screens.
-Highlighted destinations carry both a border and a filled marker. The dice are
-white with black pips and sit centred on the bar for both players. The board
-scales to the screen and re-lays out if the device is rotated mid-game.
+Portrait is the recommended way to play. It is the native orientation of most
+e-ink panels, so it stays fast and responsive.
 
-**Responsiveness.** The fixed parts of the board are drawn once into an
-offscreen buffer and reused, so each repaint is cheap. Screen refreshes are
-grouped so that a move triggers under two updates on average and a roll two,
-which keeps taps feeling immediate on slow panels; a full-screen refresh
-happens only as the deliberate flash when a game ends.
+Landscape is available from the button in the top-left, but on e-ink it has to
+be redrawn with a software rotation, so it is slower. This is a device and
+KOReader characteristic, not something the game controls.
 
-**Footprint.** Game state is a few dozen numbers, and move generation reuses
-its working memory rather than allocating per move, so a long match does not
-grow the heap. The only sizeable allocation is the offscreen board image, which
-is freed when the plugin closes.
+**If play starts to feel sluggish** — most likely after switching orientation
+back and forth, or after opening the game while KOReader itself is already in
+landscape — **restart KOReader** and it returns to normal. For the smoothest
+experience, keep KOReader in portrait and use the in-game button for landscape
+rather than rotating the whole device.
 
 ## Limitations
 
@@ -124,49 +112,6 @@ is freed when the plugin closes.
 - No doubling cube.
 - No undo once a checker is tapped into place.
 - Bearing off is always on the right; the side is not configurable.
+- Landscape is slower than portrait on e-ink; portrait is recommended.
 - Nothing is saved: closing the plugin discards the score and any game in
   progress.
-
-## Development
-
-The rules engine in `bg/rules.lua` has no KOReader dependency and runs under a
-plain `luajit`. Tests run from the plugin directory:
-
-```
-luajit tests/run.lua      # rules engine
-luajit tests/view.lua     # board view against a mock KOReader
-```
-
-`tests/run.lua` covers the opening position, hitting, bar entry against partly
-and fully blocked home boards, the forced-move and higher-die rules, doubles,
-bearing off, and scoring, then plays several thousand random games to
-completion checking that the checkers are always accounted for, that no game
-stalls, and that every score matches its final position.
-
-`tests/view.lua` checks the layout across a range of screen sizes, verifies
-that taps map back to the right points, that drawing stays within bounds, that
-a mid-game rotation preserves the position, and that every change on the board
-is actually refreshed. `tests/preview.lua` renders the board to an SVG for
-inspection without a device:
-
-```
-luajit tests/preview.lua board.svg 1448 1072
-```
-
-## Project layout
-
-```
-backgammon.koplugin/
-├── _meta.lua           plugin manifest
-├── main.lua            menu entry
-├── bg/
-│   ├── rules.lua       board, legal moves, bearing off, scoring (pure Lua)
-│   ├── game.lua        turn and match state
-│   ├── dice.lua        seeding and rolling
-│   └── boardview.lua   drawing, touch input, screen refresh
-└── tests/
-    ├── run.lua         engine tests
-    ├── view.lua        view tests against a mock KOReader
-    ├── preview.lua     SVG dump of a painted board
-    └── mock/           stand-ins for the KOReader modules the view uses
-```
