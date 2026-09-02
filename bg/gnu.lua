@@ -12,6 +12,12 @@
 
 local GNU = {}
 
+-- Weights are held as FFI float arrays (cdata), not Lua tables: ~370 KB
+-- contiguous instead of ~1.5 MB of table slots, off the GC's scan path, and
+-- faster to read. This matters on low-RAM e-ink devices, where the resident
+-- net and per-move garbage otherwise starve the collector.
+local ffi = require("ffi")
+
 --------------------------------------------------------------------------
 -- forward pass
 --------------------------------------------------------------------------
@@ -26,20 +32,21 @@ end
 
 -- Evaluate one net. `input` is a 0-based array of length net.cInput (0-based to
 -- mirror gnubg's input arrays exactly). Returns a 1-based array of outputs.
+-- Weight arrays (hiddenW/outputW/hiddenT/outputT) are 0-based FFI cdata.
 function GNU.evaluate(net, input)
     local cHidden, cInput = net.cHidden, net.cInput
     local hw, ht = net.hiddenW, net.hiddenT
     local ar = net.scratch
-    for j = 1, cHidden do ar[j] = ht[j] end
+    for j = 1, cHidden do ar[j] = ht[j - 1] end
     -- hidden accumulation: hw is laid out [input][hidden]
     local w = 0
     for i = 0, cInput - 1 do
         local ai = input[i]
         if ai ~= 0 then
             if ai == 1 then
-                for j = 1, cHidden do ar[j] = ar[j] + hw[w + j] end
+                for j = 1, cHidden do ar[j] = ar[j] + hw[w + j - 1] end
             else
-                for j = 1, cHidden do ar[j] = ar[j] + hw[w + j] * ai end
+                for j = 1, cHidden do ar[j] = ar[j] + hw[w + j - 1] * ai end
             end
         end
         w = w + cHidden
@@ -51,8 +58,8 @@ function GNU.evaluate(net, input)
     local out, betaO = net.out, net.betaOutput
     local o = 0
     for i = 1, net.cOutput do
-        local r = ot[i]
-        for j = 1, cHidden do r = r + ar[j] * ow[o + j] end
+        local r = ot[i - 1]
+        for j = 1, cHidden do r = r + ar[j] * ow[o + j - 1] end
         out[i] = activate(betaO, r)
         o = o + cHidden
     end
@@ -73,19 +80,18 @@ local function loadNet(lines, pos)
         header:match("^%s*(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)")
     cIn, cHid, cOut = tonumber(cIn), tonumber(cHid), tonumber(cOut)
     betaH, betaO = tonumber(betaH), tonumber(betaO)
+    local function readArr(n)
+        local a = ffi.new("float[?]", n)
+        for i = 0, n - 1 do a[i] = tonumber(lines[pos]); pos = pos + 1 end
+        return a
+    end
     local net = {
         cInput = cIn, cHidden = cHid, cOutput = cOut,
         betaHidden = betaH, betaOutput = betaO,
-        hiddenW = {}, outputW = {}, hiddenT = {}, outputT = {},
+        hiddenW = readArr(cIn * cHid), outputW = readArr(cHid * cOut),
+        hiddenT = readArr(cHid), outputT = readArr(cOut),
         scratch = {}, out = {},
     }
-    local function readInto(t, n)
-        for i = 1, n do t[i] = tonumber(lines[pos]); pos = pos + 1 end
-    end
-    readInto(net.hiddenW, cIn * cHid)
-    readInto(net.outputW, cHid * cOut)
-    readInto(net.hiddenT, cHid)
-    readInto(net.outputT, cOut)
     return net, pos
 end
 
@@ -94,7 +100,6 @@ end
 -- the weights as float32 (hiddenW, outputW, hiddenT, outputT). Little-endian,
 -- 4-byte aligned. Uses LuaJIT's ffi, which KOReader provides.
 function GNU.loadBinary(path)
-    local ffi = require("ffi")
     local f = assert(io.open(path, "rb"))
     local data = f:read("*a")
     f:close()
@@ -102,12 +107,12 @@ function GNU.loadBinary(path)
     local off = 4                       -- skip magic
     local function i32() local v = ffi.cast("const int32_t*", base + off)[0]; off = off + 4; return v end
     local function f32() local v = ffi.cast("const float*", base + off)[0]; off = off + 4; return v end
+    -- copy the raw float32 run into an owned FFI array (0-based cdata)
     local function floats(n)
-        local p = ffi.cast("const float*", base + off)
-        local t = {}
-        for i = 1, n do t[i] = p[i - 1] end
+        local a = ffi.new("float[?]", n)
+        ffi.copy(a, base + off, n * 4)
         off = off + 4 * n
-        return t
+        return a
     end
     local function net()
         local cIn, cHid, cOut = i32(), i32(), i32()

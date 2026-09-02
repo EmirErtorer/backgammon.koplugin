@@ -11,13 +11,15 @@ local nets = GNU.loadText(src)
 local buf = {}
 local function putI32(v) local a=ffi.new("int32_t[1]",v); buf[#buf+1]=ffi.string(a,4) end
 local function putF32(v) local a=ffi.new("float[1]",v); buf[#buf+1]=ffi.string(a,4) end
-local function putFloats(t) local a=ffi.new("float[?]",#t); for i=1,#t do a[i-1]=t[i] end; buf[#buf+1]=ffi.string(a,4*#t) end
+-- weights are now FFI float arrays (cdata); write their raw bytes by count
+local function putFloats(a, n) buf[#buf+1] = ffi.string(a, 4 * n) end
 buf[#buf+1] = "GNU1"
 for _,name in ipairs({"contact","race","crashed"}) do
     local n = nets[name]
     putI32(n.cInput); putI32(n.cHidden); putI32(n.cOutput)
     putF32(n.betaHidden); putF32(n.betaOutput)
-    putFloats(n.hiddenW); putFloats(n.outputW); putFloats(n.hiddenT); putFloats(n.outputT)
+    putFloats(n.hiddenW, n.cInput * n.cHidden); putFloats(n.outputW, n.cHidden * n.cOutput)
+    putFloats(n.hiddenT, n.cHidden); putFloats(n.outputT, n.cOutput)
 end
 local f = assert(io.open(out, "wb")); f:write(table.concat(buf)); f:close()
 print("wrote "..out)

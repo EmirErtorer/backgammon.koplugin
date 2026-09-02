@@ -653,6 +653,13 @@ function BoardView:init()
     self.ai_busy = false
     self.ai_moves = nil
     self.ai_i = 0
+    -- a level that already pauses to think (the 2-ply neural net) needs less
+    -- of an added delay to keep its moves followable
+    self.ai_slow = false
+    if self.ai_side then
+        local lv = require("bg/ai").level(self.ai_level)
+        self.ai_slow = (lv and lv.eval == "gnu" and (lv.ply or 1) >= 2) or false
+    end
 
     self:computeLayout()
 
@@ -1003,6 +1010,9 @@ local AI_DELAY_ROLL   = 0.6   -- handover -> the computer rolls
 local AI_DELAY_FIRST  = 2.0   -- dice shown -> the computer's first move
 local AI_DELAY_BETWEEN = 1.6  -- between the computer's moves within a turn
 local AI_DELAY_PASS   = 2.0   -- a dead roll is shown before the turn passes back
+-- shorter delays for levels that already spend a second or two thinking
+local AI_DELAY_FIRST_SLOW   = 0.4
+local AI_DELAY_BETWEEN_SLOW = 1.0
 
 -- If it is the computer's turn to roll, start its turn after a short beat so
 -- the human sees the handover. A no-op in two-player games.
@@ -1041,7 +1051,7 @@ function BoardView:aiRoll()
     -- thinking does not hold up painting the dice that were just rolled
     self.ai_moves = nil
     self.ai_i = 0
-    UIManager:scheduleIn(AI_DELAY_FIRST, self._ai_step)
+    UIManager:scheduleIn(self.ai_slow and AI_DELAY_FIRST_SLOW or AI_DELAY_FIRST, self._ai_step)
 end
 
 function BoardView:aiAfterPass()
@@ -1090,7 +1100,7 @@ function BoardView:aiStep()
         return
     end
     -- more of the computer's moves to play, one at a time so they are followable
-    UIManager:scheduleIn(AI_DELAY_BETWEEN, self._ai_step)
+    UIManager:scheduleIn(self.ai_slow and AI_DELAY_BETWEEN_SLOW or AI_DELAY_BETWEEN, self._ai_step)
 end
 
 -- Apply one computer move and refresh it the same way a human move is refreshed.
