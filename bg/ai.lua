@@ -434,12 +434,10 @@ local function gnuValue(s, side)
     return GNU.equity(toGnu(s, side), gnu_nets) or 0.0
 end
 
--- The opponent typically has ~15 legal replies per roll; net-evaluating all of
--- them at 2-ply is too slow on a device. So we screen replies with the fast
--- positional heuristic and only net-evaluate the opponent's most promising few
--- (the ones best for the opponent). gnubg uses the same move-filter idea.
-local GNU_OPP_KEEP = 8
-local rep_scored = {}
+-- How many of our own top candidate moves to expand at 2-ply. Kept small so
+-- the (now unfiltered) opponent reply search stays within the device budget;
+-- safe because the 1-ply net screen already ranks our moves very well.
+local GNU_CAND_KEEP = 4
 
 -- expected value to `player` after its move: average over the opponent's 21
 -- rolls of the reply that is worst for `player` (opponent then, us next).
@@ -455,27 +453,15 @@ local function opponentReplyValueGNU(s, player)
             roll_dice[1], roll_dice[2] = a, b
         end
         local replies = AI.enumerateTurns(s, opp, roll_dice, ndice)
-        local nrep = #replies
         local worst
-        if nrep == 0 then
+        if #replies == 0 then
             worst = gnuValue(s, player)          -- opponent stuck, our roll next
         else
-            -- pick which replies to net-evaluate: all of them, or the top few
-            -- by a quick heuristic screen (best for the opponent)
-            local pick, npick = replies, nrep
-            if nrep > GNU_OPP_KEEP then
-                for i = 1, nrep do
-                    local mv = replies[i].moves
-                    for j = 1, #mv do R.applyMove(s, opp, mv[j].from, mv[j].to, reply_undo[j]) end
-                    rep_scored[i] = { t = replies[i], v = evalPositional(s, opp) }
-                    for j = #mv, 1, -1 do R.undoMove(s, opp, reply_undo[j]) end
-                end
-                for i = nrep + 1, #rep_scored do rep_scored[i] = nil end
-                table.sort(rep_scored, function(x, y) return x.v > y.v end)
-                pick, npick = rep_scored, GNU_OPP_KEEP
-            end
-            for i = 1, npick do
-                local mv = (pick == replies) and pick[i].moves or pick[i].t.moves
+            -- the opponent plays the reply that is worst for us, judged by the
+            -- net itself (no heuristic pre-filter -- that pruned the very shots
+            -- the net cares about and made 2-ply weaker than 1-ply)
+            for i = 1, #replies do
+                local mv = replies[i].moves
                 for j = 1, #mv do R.applyMove(s, opp, mv[j].from, mv[j].to, reply_undo[j]) end
                 local v = gnuValue(s, player)    -- our roll next; opponent minimises this
                 for j = #mv, 1, -1 do R.undoMove(s, opp, reply_undo[j]) end
@@ -511,7 +497,7 @@ local function chooseTurnGNU(s, player, turns, ply)
 
     -- 2-ply: look a full roll ahead for the strongest handful
     table.sort(scored, function(x, y) return x.v > y.v end)
-    local keep = math.min(8, #scored)
+    local keep = math.min(GNU_CAND_KEEP, #scored)
     local best, best_v
     for i = 1, keep do
         local mv = scored[i].t.moves
