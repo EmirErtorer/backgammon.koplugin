@@ -6,8 +6,18 @@
 
 local R = require("bg/rules")
 local Dice = require("bg/dice")
+local T = require("bg/i18n")
 
 local WHITE, BLACK, BAR, OFF = R.WHITE, R.BLACK, R.BAR, R.OFF
+
+local function colorName(c) return (c == WHITE) and T("white") or T("black") end
+
+-- snapshot of a position, for the post-game review
+local function snap(s)
+    local p = {}
+    for i = 1, 24 do p[i] = s.points[i] end
+    return { points = p, bw = s.bar[WHITE], bb = s.bar[BLACK], ow = s.off[WHITE], ob = s.off[BLACK] }
+end
 
 local Game = {}
 Game.__index = Game
@@ -39,6 +49,8 @@ function M.new()
     g.selected = nil
     g.message = nil
     g.last_hit = false
+    -- per-game turn history, for the post-game review. Reset each game.
+    g.history = {}
     g:newGame()
     return g
 end
@@ -55,9 +67,11 @@ function Game:newGame()
     self.dests_n = 0
     self.rolled[1], self.rolled[2] = 0, 0
     self.opening_dice[1], self.opening_dice[2] = 0, 0
-    self.message = "Roll one die each to see who starts"
+    self.message = T("roll_one_each")
     self.winner = nil
     self.win_points = 0
+    self.history = {}
+    self._turn = nil
 end
 
 -- Copy the shared analyse() result into our own arrays, since the engine hands
@@ -78,15 +92,14 @@ function Game:openingRoll()
     self.rolled[1], self.rolled[2] = a, b
     self.opening_dice[1], self.opening_dice[2] = a, b
     if a == b then
-        self.message = ("Both rolled %d. Roll again"):format(a)
+        self.message = T("both_rolled", a)
         return false
     end
     self.player = (a > b) and WHITE or BLACK
     self.phase = "roll"
     -- spell out what just happened: this is not a turn, it only picks who goes
     -- first, and the starter still has to roll
-    self.message = ("White %d, Black %d. %s starts, roll again"):format(
-        a, b, self.player == WHITE and "White" or "Black")
+    self.message = T("opening_result", T("white"), a, T("black"), b, colorName(self.player))
     return true
 end
 
@@ -99,14 +112,28 @@ function Game:roll()
     self.selected = nil
     self.dests_n = 0
     self:refreshLegal()
+    -- start recording this turn for the review (a dead roll records nothing)
+    self._turn = { player = self.player, ndice = self.ndice, dice = {},
+                   before = snap(self.state), moves = {} }
+    for i = 1, self.ndice do self._turn.dice[i] = self.dice[i] end
     if self.legal_n == 0 then
-        self.message = "No legal move"
+        self._turn = nil
+        self.message = T("no_legal_move")
         self.phase = "move"      -- the view shows the dice, then passes
         return "pass"
     end
     self.phase = "move"
     self.message = nil
     return "move"
+end
+
+-- finalise the current turn into the review history (turns with no move, e.g.
+-- dead rolls, are dropped)
+function Game:finalizeTurn()
+    if self._turn and #self._turn.moves > 0 then
+        self.history[#self.history + 1] = self._turn
+    end
+    self._turn = nil
 end
 
 function Game:passTurn()
@@ -178,6 +205,7 @@ function Game:move(to)
 
     R.applyMove(self.state, self.player, from, to, self.undo)
     self.last_hit = self.undo.hit
+    if self._turn then self._turn.moves[#self._turn.moves + 1] = { from = from, to = to, die = die } end
 
     -- consume one die of that value
     for i = 1, self.ndice do
@@ -193,14 +221,15 @@ function Game:move(to)
 
     local w = R.winner(self.state)
     if w then
+        self:finalizeTurn()
         self.winner = w
         self.win_points = R.scoreFor(self.state, w)
         self.score[w] = self.score[w] + self.win_points
         self.games = self.games + 1
         self.phase = "over"
         self.legal_n = 0
-        self.message = (w == WHITE and "White" or "Black") .. " wins "
-            .. self.win_points .. (self.win_points == 1 and " point" or " points")
+        self.message = (self.win_points == 1) and T("win_1", colorName(w))
+            or T("win_n", colorName(w), self.win_points)
         return "won"
     end
 
@@ -211,6 +240,7 @@ function Game:move(to)
         end
     end
 
+    self:finalizeTurn()
     self.legal_n = 0
     return "turn_over"
 end

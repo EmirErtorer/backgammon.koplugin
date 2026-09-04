@@ -19,6 +19,7 @@ local UIManager = require("ui/uimanager")
 
 local G = require("bg/game")
 local R = require("bg/rules")
+local T = require("bg/i18n")
 
 -- Blitbuffer.new allocates raw C memory (calloc) and registers no finalizer, so
 -- a buffer that is never :free()d leaks off-heap memory the Lua GC cannot
@@ -177,14 +178,6 @@ function BoardView:computeLayout()
     if da_x + dice_w > ix + inner_w then da_x = ix + inner_w - dice_w end
     L.dice_area = rect(da_x, L.band_y, dice_w, L.band_h)
 
-    -- Roll button on the spine, where the dice will appear. Sized to the dice
-    -- patch (never wider) and kept inside the middle band so it does not spill
-    -- onto the points above or below.
-    local roll_w = math.min(dice_w, math.floor(pt_w * 4))
-    local roll_h = math.min(L.band_h, math.max(math.floor(L.band_h * 0.8), 1))
-    L.roll_btn = rect(L.spine_x - math.floor(roll_w / 2),
-                      L.band_y + math.floor((L.band_h - roll_h) / 2), roll_w, roll_h)
-
     L.top_bar = rect(0, 0, W, L.top_h)
     L.msg = rect(0, H - L.bot_h, W, text_h + pad)
 
@@ -209,6 +202,9 @@ function BoardView:computeLayout()
     -- board spine (computed below) so it is within reach of both players.
     L.new_btn = rect(pad, btn_y, side_w, btn_h)
     L.close_btn = rect(W - side_w - pad, btn_y, side_w, btn_h)
+    -- Review button lives in the bottom centre; only drawn/handled once a game
+    -- is over (see paintChrome / onTap)
+    L.review_btn = rect(math.floor(W / 2 - side_w / 2), btn_y, side_w, btn_h)
 
     -- Font:getFace runs the size through Screen:scaleBySize, so divide the
     -- pixel height we actually want by that factor or high dpi screens get
@@ -216,6 +212,22 @@ function BoardView:computeLayout()
     local dpi_scale = Screen:scaleBySize(1000) / 1000
     L.face_big = Font:getFace("cfont", math.floor(text_h * 0.8 / dpi_scale))
     L.face_small = Font:getFace("cfont", math.floor(text_h * 0.62 / dpi_scale))
+
+    -- Compact Roll button on the spine, snug around a small die + its label
+    -- (sized to fit "Next game" too), so it reads as a button rather than a big
+    -- white slab, and never overflows the middle band or the board.
+    do
+        local rh = math.max(18, math.floor(L.band_h * 0.58))
+        if rh > L.band_h then rh = L.band_h end
+        local die = math.floor(rh * 0.55)
+        local rlbl = self:textWidth(L.face_small, "Roll", true)
+        local nlbl = self:textWidth(L.face_small, "Next game", true)
+        local content = math.max(die + 10 + rlbl, nlbl)
+        local padx = math.floor(rh * 0.5)
+        local rw = math.min(content + padx * 2, L.inner_w - 4)
+        L.roll_btn = rect(L.spine_x - math.floor(rw / 2),
+                          L.band_y + math.floor((L.band_h - rh) / 2), rw, rh)
+    end
 
     -- Orientation. The base layout above is white-at-bottom, bearing off bottom
     -- right. Reflect the board elements about the board centre to get the other
@@ -537,7 +549,7 @@ function BoardView:paintChrome(bb)
     local pad = math.floor(L.pt_w * 0.2)
 
     -- scoreboard
-    local score = ("White %d  -  %d Black"):format(g.score[WHITE], g.score[BLACK])
+    local score = ("%s %d  -  %d %s"):format(T("white"), g.score[WHITE], g.score[BLACK], T("black"))
     local baseline = math.floor(L.top_h * 0.42)
     local w = self:textWidth(L.face_big, score, true)
     self:text(bb, math.floor((W - w) / 2), baseline, L.face_big, score, true)
@@ -546,19 +558,19 @@ function BoardView:paintChrome(bb)
     if self.notice then
         turn = self.notice          -- a "can't come in / can't move" skip notice
     elseif g.phase == "over" then
-        turn = g.message or "Game over"
+        turn = g.message or ""
     elseif g.phase == "opening" then
-        turn = g.message or "Roll to see who starts"
+        turn = g.message or T("roll_to_start")
     elseif self.ai_side then
         if g.player == self.ai_side then
-            turn = self.ai_busy and "Computer is thinking…" or "Computer's turn"
+            turn = self.ai_busy and T("computer_thinking") or T("computers_turn")
         else
-            turn = "Your turn"
+            turn = T("your_turn")
         end
     else
-        turn = ((g.player == WHITE) and "White" or "Black") .. " to play"
+        turn = T("to_play", (g.player == WHITE) and T("white") or T("black"))
     end
-    local sub = ("Game %d      %s"):format(g.games + 1, turn)
+    local sub = ("%s      %s"):format(T("game_n", g.games + 1), turn)
     w = self:textWidth(L.face_small, sub)
     self:text(bb, math.floor((W - w) / 2), math.floor(L.top_h * 0.82), L.face_small, sub)
 
@@ -588,7 +600,8 @@ function BoardView:paintChrome(bb)
         local rb = L.roll_btn
         bb:paintRoundedRect(rb.x, rb.y, rb.w, rb.h, WHITE_C, 6)
         bb:paintBorder(rb.x, rb.y, rb.w, rb.h, 3, BLACK_C, 6)
-        if label == "Roll" then
+        if g.phase ~= "over" then
+            -- a small die next to the word, whatever language the label is in
             local s = math.floor(rb.h * 0.55)
             local tw = self:textWidth(L.face_small, label, true)
             local total = s + 8 + tw
@@ -603,16 +616,22 @@ function BoardView:paintChrome(bb)
     end
 
     bb:paintBorder(L.close_btn.x, L.close_btn.y, L.close_btn.w, L.close_btn.h, 2, BLACK_C, 6)
-    self:centreText(bb, L.close_btn, L.face_small, "Close")
+    self:centreText(bb, L.close_btn, L.face_small, T("close"))
     bb:paintBorder(L.new_btn.x, L.new_btn.y, L.new_btn.w, L.new_btn.h, 2, BLACK_C, 6)
-    self:centreText(bb, L.new_btn, L.face_small, "New game")
+    self:centreText(bb, L.new_btn, L.face_small, T("new_game"))
+
+    -- Review button, offered in the bottom centre once a game is over
+    if g.phase == "over" and g.history and #g.history > 0 and L.review_btn then
+        bb:paintBorder(L.review_btn.x, L.review_btn.y, L.review_btn.w, L.review_btn.h, 2, BLACK_C, 6)
+        self:centreText(bb, L.review_btn, L.face_small, T("review"))
+    end
 
     self:drawRotateIcon(bb, L.rotate_btn)
 
     -- return-to-menu button, only when the caller gave us somewhere to go back to
     if self.on_menu and L.menu_btn then
         bb:paintBorder(L.menu_btn.x, L.menu_btn.y, L.menu_btn.w, L.menu_btn.h, 2, BLACK_C, 6)
-        self:centreText(bb, L.menu_btn, L.face_small, "Menu")
+        self:centreText(bb, L.menu_btn, L.face_small, T("menu"))
     end
 end
 
@@ -634,7 +653,7 @@ function BoardView:clearDice()
 end
 
 function BoardView:rollButtonLabel()
-    return (self.game.phase == "over") and "Next game" or "Roll"
+    return (self.game.phase == "over") and T("next_game") or T("roll")
 end
 
 -- The spine button is shown when a roll (or starting the next game) is what's
@@ -716,9 +735,15 @@ function BoardView:init()
     -- upright) plays, and which bottom corner they bear off to. flip_v puts the
     -- bottom colour (black) at the bottom; flip_h puts the tray/home on the left.
     local Settings = require("bg/settings")
+    require("bg/i18n").refresh()      -- pick up the current language choice
     self.bottom_color = (Settings.get("user_color") == "black") and BLACK or WHITE
-    self.flip_v = (self.bottom_color == BLACK)
-    self.flip_h = (Settings.get("bear_off") == "left")
+    -- base orientation from settings; the effective flip may add a 180° turn
+    -- each move when "flip board each turn" is on (two-player only)
+    self.base_flip_v = (self.bottom_color == BLACK)
+    self.base_flip_h = (Settings.get("bear_off") == "left")
+    self.flip_2p = (Settings.get("flip_turns") == "on")
+    self.flip_v = self.base_flip_v
+    self.flip_h = self.base_flip_h
 
     -- opponent: "human" (two players) or "ai". When "ai", player 1 (bottom)
     -- is the human and the computer takes the other colour.
@@ -848,6 +873,33 @@ function BoardView:goToMenu()
     if on_menu then on_menu() end
 end
 
+-- Open the post-game review over the finished board.
+function BoardView:openReview()
+    local ReviewView = require("bg/reviewview")
+    UIManager:show(ReviewView:new{
+        history = self.game.history,
+        on_close = function() UIManager:setDirty(self, "flashui") end,
+    })
+end
+
+-- Record a finished game into the lifetime stats (once per game).
+function BoardView:recordResult(winner)
+    local Settings = require("bg/settings")
+    Settings.incStat("games")
+    if self.ai_side then
+        local id = self.ai_level
+        Settings.incStat("ai_played_" .. id)
+        if winner ~= self.ai_side then
+            Settings.incStat("ai_won_" .. id)
+            local st = Settings.getStat("streak") + 1
+            Settings.setStat("streak", st)
+            if st > Settings.getStat("best_streak") then Settings.setStat("best_streak", st) end
+        else
+            Settings.setStat("streak", 0)
+        end
+    end
+end
+
 --------------------------------------------------------------------------
 -- input
 --------------------------------------------------------------------------
@@ -874,7 +926,13 @@ function BoardView:onTap(_, ges)
     if inRect(L.new_btn, x, y) then
         g:newGame()
         self:clearDice()
+        self.notice = nil
+        self.skips = 0
         UIManager:setDirty(self, "flashui")
+        return true
+    end
+    if g.phase == "over" and g.history and #g.history > 0 and inRect(L.review_btn, x, y) then
+        self:openReview()
         return true
     end
     if self:showRollButton() and inRect(L.roll_btn, x, y) then
@@ -1011,7 +1069,7 @@ function BoardView:onRollButton()
         if what == "pass" then
             -- a dead roll: show the dice, note it up top, then hand over on its
             -- own -- no Continue button to reach for
-            self.notice = self:sideName(g.player) .. " can't move"
+            self.notice = T("cant_move", self:sideName(g.player))
             self.ai_busy = true
             self:refreshTop()
             UIManager:scheduleIn(AI_DELAY_PASS, self._skip_pass)
@@ -1025,9 +1083,25 @@ end
 -- and "Computer" against the machine.
 function BoardView:sideName(player)
     if self.ai_side then
-        return (player == self.ai_side) and "Computer" or "You"
+        return (player == self.ai_side) and T("computer") or T("you")
     end
-    return (player == WHITE) and "White" or "Black"
+    return (player == WHITE) and T("white") or T("black")
+end
+
+-- Two-player "flip board each turn": rotate the board 180 degrees so whoever is
+-- on move reads it upright. A no-op unless the option is on and it is a
+-- two-player game. Rebuilds the static board image and does one full refresh.
+function BoardView:applyPerspective()
+    if not (self.flip_2p and self.opponent == "human") then return end
+    local need180 = (self.game.player ~= self.bottom_color)
+    local h = (self.base_flip_h ~= need180)     -- XOR
+    local v = (self.base_flip_v ~= need180)
+    if h ~= self.flip_h or v ~= self.flip_v then
+        self.flip_h, self.flip_v = h, v
+        self:computeLayout()
+        self:free()                             -- paintTo rebuilds the board image
+        UIManager:setDirty(self, "full")
+    end
 end
 
 -- Start of a turn (phase == "roll"). If the player is closed out -- on the bar
@@ -1045,13 +1119,13 @@ function BoardView:beginTurn()
             -- pathological: both sides closed out. Stop the ping-pong.
             self.ai_busy = false
             self.notice = nil
-            g.message = "No legal moves for either player"
+            g.message = T("no_moves_either")
             self:refreshTop()
             self:refreshBottom()
             return
         end
         self.ai_busy = true
-        self.notice = self:sideName(g.player) .. " can't come in"
+        self.notice = T("cant_come_in", self:sideName(g.player))
         g.message = nil
         self:clearDice()
         self:refreshEach("fast", self.L.dice_area)   -- clears any stale dice/button
@@ -1063,6 +1137,7 @@ function BoardView:beginTurn()
 
     self.skips = 0
     self.notice = nil
+    self:applyPerspective()   -- face the player on move (two-player flip option)
     -- the caller already refreshed the spine (the move's own refresh box, or the
     -- skip/opening refresh), and the deferred repaint shows the Roll button now
     -- that it is a fresh "roll" turn, so only the top label needs a refresh here
@@ -1108,6 +1183,7 @@ function BoardView:playMove(to)
     for i = 1, g.ndice do self.shown_dice[i] = g.dice[i] end
 
     if res == "won" then
+        self:recordResult(g.winner)
         UIManager:setDirty(self, "flashui")
         return
     end
@@ -1171,7 +1247,7 @@ function BoardView:aiRoll()
     if what == "pass" then
         -- a dead roll: note it up top and hold the dead dice on screen a moment
         -- before handing back
-        self.notice = "Computer can't move"
+        self.notice = T("cant_move", T("computer"))
         self:refreshTop()
         UIManager:scheduleIn(AI_DELAY_PASS, self._skip_pass)
         return
@@ -1192,7 +1268,7 @@ function BoardView:aiStep()
         self.ai_moves = AI.chooseTurn(g.state, g.player, g.dice, g.ndice, self.ai_level)
         if #self.ai_moves == 0 then
             -- defensive: a real dead roll is already handled at roll time
-            self.notice = "Computer can't move"
+            self.notice = T("cant_move", T("computer"))
             self:refreshTop()
             UIManager:scheduleIn(AI_DELAY_PASS, self._skip_pass)
             return
@@ -1230,6 +1306,7 @@ function BoardView:applyAIMove(from, to)
     self:clearDice()
     for i = 1, g.ndice do self.shown_dice[i] = g.dice[i] end
     if res == "won" then
+        self:recordResult(g.winner)
         UIManager:setDirty(self, "flashui")
         return res
     end

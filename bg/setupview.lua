@@ -15,6 +15,7 @@ local RenderText = require("ui/rendertext")
 local UIManager = require("ui/uimanager")
 
 local AI = require("bg/ai")
+local T = require("bg/i18n")
 
 local Screen = Device.screen
 local BLACK_C = Blitbuffer.COLOR_BLACK
@@ -32,6 +33,7 @@ local function inRect(r, x, y)
 end
 
 function SetupView:init()
+    require("bg/i18n").refresh()                -- pick up the current language
     self.opponent = self.opponent or "human"   -- "human" | "ai"
     self.level = self.level or 1
     -- on_start(opponent, level) is supplied by the caller
@@ -120,36 +122,39 @@ function SetupView:paintTo(bb, x, y)
     local yy = math.floor(unit * 1.6)
 
     self:drawCentered(bb, cx, yy + math.floor(self.face_title.size * 0.35),
-                      self.face_title, "Backgammon", true)
+                      self.face_title, T("app_title"), true)
     yy = yy + math.floor(unit * 2.2)
-    self:drawCentered(bb, cx, yy, self.face_small, "Choose your game", false, BLACK_C)
+    self:drawCentered(bb, cx, yy, self.face_small, T("choose_game"), false, BLACK_C)
     yy = yy + math.floor(unit * 1.2)
 
-    -- Board & colours (opens the settings screen; persists across sessions)
-    local set_lbl = "Board & colours  \u{25B8}"
-    local set_w = self:textW(self.face_small, set_lbl, false) + math.floor(unit * 1.6)
+    -- Two settings buttons side by side: board/colours and lifetime stats
     local set_h = math.floor(unit * 1.5)
-    local set_r = rect(cx - math.floor(set_w / 2), yy, set_w, set_h)
-    bb:paintRoundedRect(set_r.x, set_r.y, set_r.w, set_r.h, WHITE_C, math.floor(unit * 0.3))
-    bb:paintBorder(set_r.x, set_r.y, set_r.w, set_r.h, 2, BLACK_C, math.floor(unit * 0.3))
-    self:drawCentered(bb, cx, set_r.y + math.floor(set_r.h / 2) + math.floor(self.face_small.size * 0.35),
-                      self.face_small, set_lbl, false, BLACK_C)
-    self.hit.settings = set_r
+    local half = math.floor((self.col_w - self.gap) / 2)
+    local function textBtn(r, label)
+        bb:paintRoundedRect(r.x, r.y, r.w, r.h, WHITE_C, math.floor(unit * 0.3))
+        bb:paintBorder(r.x, r.y, r.w, r.h, 2, BLACK_C, math.floor(unit * 0.3))
+        self:drawCentered(bb, r.x + math.floor(r.w / 2),
+                          r.y + math.floor(r.h / 2) + math.floor(self.face_small.size * 0.35),
+                          self.face_small, label, false, BLACK_C)
+    end
+    local sr = rect(self.col_x, yy, half, set_h)
+    local tr = rect(self.col_x + half + self.gap, yy, half, set_h)
+    textBtn(sr, T("board_colours"))
+    textBtn(tr, T("statistics"))
+    self.hit.settings, self.hit.stats = sr, tr
     yy = yy + set_h + math.floor(unit * 0.7)
 
     -- Opponent
-    self:drawText(bb, self.col_x, yy, self.face_small, "OPPONENT", true, BLACK_C)
+    self:drawText(bb, self.col_x, yy, self.face_small, T("opponent"), true, BLACK_C)
     yy = yy + math.floor(unit * 0.6)
 
     local r1 = rect(self.col_x, yy, self.col_w, self.row_h)
-    self:drawRow(bb, r1, "Two players", "Share the device, take turns",
-                 self.opponent == "human")
+    self:drawRow(bb, r1, T("two_players"), T("two_players_sub"), self.opponent == "human")
     self.hit.human = r1
     yy = yy + self.row_h + self.gap
 
     local r2 = rect(self.col_x, yy, self.col_w, self.row_h)
-    self:drawRow(bb, r2, "Play the computer", "One player against the machine",
-                 self.opponent == "ai")
+    self:drawRow(bb, r2, T("play_computer"), T("play_computer_sub"), self.opponent == "ai")
     self.hit.ai = r2
     yy = yy + self.row_h + self.gap
 
@@ -161,7 +166,7 @@ function SetupView:paintTo(bb, x, y)
     -- Difficulty (only when playing the computer)
     if self.opponent == "ai" then
         yy = yy + math.floor(unit * 0.4)
-        self:drawText(bb, self.col_x, yy, self.face_small, "DIFFICULTY", true, BLACK_C)
+        self:drawText(bb, self.col_x, yy, self.face_small, T("difficulty"), true, BLACK_C)
         yy = yy + math.floor(unit * 0.6)
         self.hit.levels = {}
         local nlv = #AI.levels
@@ -172,7 +177,8 @@ function SetupView:paintTo(bb, x, y)
         if dh > self.row_h then dh = self.row_h end
         for _, lv in ipairs(AI.levels) do
             local r = rect(self.col_x, yy, self.col_w, dh)
-            self:drawRow(bb, r, lv.id .. ".  " .. lv.name, lv.desc, self.level == lv.id)
+            self:drawRow(bb, r, lv.id .. ".  " .. T("lvl" .. lv.id .. "_name"),
+                         T("lvl" .. lv.id .. "_desc"), self.level == lv.id)
             self.hit.levels[lv.id] = r
             yy = yy + dh + rgap
         end
@@ -182,13 +188,13 @@ function SetupView:paintTo(bb, x, y)
     local start_r = rect(self.col_x, footer_top, self.col_w, start_h)
     bb:paintRoundedRect(start_r.x, start_r.y, start_r.w, start_r.h, BLACK_C, math.floor(unit * 0.4))
     self:drawCentered(bb, cx, start_r.y + math.floor(start_r.h / 2) + math.floor(self.face.size * 0.4),
-                      self.face, "Start game", true, WHITE_C)
+                      self.face, T("start_game"), true, WHITE_C)
     self.hit.start = start_r
 
     local close_w = math.floor(self.col_w * 0.35)
     local close_r = rect(math.floor(W / 2 - close_w / 2), H - math.floor(unit * 1.1), close_w, math.floor(unit * 1.4))
     self:drawCentered(bb, cx, close_r.y + math.floor(close_r.h / 2) + math.floor(self.face_small.size * 0.35),
-                      self.face_small, "Close", false, BLACK_C)
+                      self.face_small, T("close"), false, BLACK_C)
     self.hit.close = close_r
 end
 
@@ -217,6 +223,13 @@ function SetupView:onTap(_, ges)
     if inRect(hit.settings, x, y) then
         local SettingsView = require("bg/settingsview")
         UIManager:show(SettingsView:new{
+            on_close = function() UIManager:setDirty(self, "flashui") end,
+        })
+        return true
+    end
+    if inRect(hit.stats, x, y) then
+        local StatsView = require("bg/statsview")
+        UIManager:show(StatsView:new{
             on_close = function() UIManager:setDirty(self, "flashui") end,
         })
         return true

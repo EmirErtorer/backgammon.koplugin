@@ -537,4 +537,14 @@ end
 -- Let a caller supply pre-loaded nets (e.g. a test), else GNU.load() is used.
 function AI.setGnuNets(nets) gnu_nets = nets end
 
+-- Cubeless equity of a position to `sideToMove` (who is on roll), via the GNU
+-- net. Used by the post-game review. Range about [-3, 3].
+function AI.positionValue(s, sideToMove)
+    gnu_nets = gnu_nets or GNU.load()
+    local w = R.winner(s)
+    if w == sideToMove then return 3.0 end
+    if w == -sideToMove then return -3.0 end
+    return GNU.equity(toGnu(s, sideToMove), gnu_nets) or 0.0
+end
+
 return AI
