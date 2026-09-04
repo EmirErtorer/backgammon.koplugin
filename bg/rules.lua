@@ -353,6 +353,17 @@ function M.analyse(s, player, dice, ndice)
     return result
 end
 
+-- True when the player has a checker on the bar and cannot enter with any die
+-- (the opponent has closed all six entry points). Such a turn is hopeless for
+-- every possible roll, so the caller can skip it without rolling.
+function M.closedOut(s, player)
+    if s.bar[player] <= 0 then return false end
+    for die = 1, 6 do
+        if destination(s, player, BAR, die) ~= nil then return false end
+    end
+    return true
+end
+
 --------------------------------------------------------------------------
 -- outcome
 --------------------------------------------------------------------------

@@ -123,7 +123,19 @@ function SetupView:paintTo(bb, x, y)
                       self.face_title, "Backgammon", true)
     yy = yy + math.floor(unit * 2.2)
     self:drawCentered(bb, cx, yy, self.face_small, "Choose your game", false, BLACK_C)
-    yy = yy + math.floor(unit * 1.4)
+    yy = yy + math.floor(unit * 1.2)
+
+    -- Board & colours (opens the settings screen; persists across sessions)
+    local set_lbl = "Board & colours  \u{25B8}"
+    local set_w = self:textW(self.face_small, set_lbl, false) + math.floor(unit * 1.6)
+    local set_h = math.floor(unit * 1.5)
+    local set_r = rect(cx - math.floor(set_w / 2), yy, set_w, set_h)
+    bb:paintRoundedRect(set_r.x, set_r.y, set_r.w, set_r.h, WHITE_C, math.floor(unit * 0.3))
+    bb:paintBorder(set_r.x, set_r.y, set_r.w, set_r.h, 2, BLACK_C, math.floor(unit * 0.3))
+    self:drawCentered(bb, cx, set_r.y + math.floor(set_r.h / 2) + math.floor(self.face_small.size * 0.35),
+                      self.face_small, set_lbl, false, BLACK_C)
+    self.hit.settings = set_r
+    yy = yy + set_h + math.floor(unit * 0.7)
 
     -- Opponent
     self:drawText(bb, self.col_x, yy, self.face_small, "OPPONENT", true, BLACK_C)
@@ -200,6 +212,13 @@ function SetupView:onTap(_, ges)
 
     if inRect(hit.close, x, y) then
         UIManager:close(self)
+        return true
+    end
+    if inRect(hit.settings, x, y) then
+        local SettingsView = require("bg/settingsview")
+        UIManager:show(SettingsView:new{
+            on_close = function() UIManager:setDirty(self, "flashui") end,
+        })
         return true
     end
     if inRect(hit.start, x, y) then
