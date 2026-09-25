@@ -34,6 +34,17 @@ function Backgammon:addToMainMenu(menu_items)
                             on_menu = openSetup,
                         })
                     end,
+                    -- resume a game that was left in progress, if one was saved
+                    on_resume = function()
+                        local saved = require("bg/settings").loadGame()
+                        if not saved then return end
+                        UIManager:show(BoardView:new{
+                            opponent = saved.opponent,
+                            ai_level = saved.ai_level,
+                            resume = saved,
+                            on_menu = openSetup,
+                        })
+                    end,
                 })
             end
             openSetup()

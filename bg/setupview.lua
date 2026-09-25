@@ -16,6 +16,8 @@ local UIManager = require("ui/uimanager")
 
 local AI = require("bg/ai")
 local T = require("bg/i18n")
+local U = require("bg/uiutil")
+local Settings = require("bg/settings")
 
 local Screen = Device.screen
 local BLACK_C = Blitbuffer.COLOR_BLACK
@@ -27,16 +29,15 @@ local SetupView = InputContainer:extend{
     covers_fullscreen = true,
 }
 
-local function rect(x, y, w, h) return { x = x, y = y, w = w, h = h } end
-local function inRect(r, x, y)
-    return r and x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h
-end
+local rect, inRect = U.rect, U.inRect
 
 function SetupView:init()
     require("bg/i18n").refresh()                -- pick up the current language
     self.opponent = self.opponent or "human"   -- "human" | "ai"
     self.level = self.level or 1
-    -- on_start(opponent, level) is supplied by the caller
+    -- on_start(opponent, level) is supplied by the caller; on_resume (optional)
+    -- reopens a saved game. Only offer Resume when one is actually stored.
+    self.has_saved = (self.on_resume ~= nil) and Settings.hasSavedGame()
     self.dimen = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
     self.hit = {}                               -- tap targets, rebuilt each paint
     self:computeLayout()
@@ -67,17 +68,14 @@ end
 -- drawing helpers
 --------------------------------------------------------------------------
 
-function SetupView:textW(face, s, bold)
-    return RenderText:sizeUtf8Text(0, 100000, face, s, false, bold or false).x
-end
+function SetupView:textW(face, s, bold) return U.textW(face, s, bold) end
 
 function SetupView:drawText(bb, x, baseline, face, s, bold, color)
-    RenderText:renderUtf8Text(bb, x, baseline, face, s, false, bold or false,
-                              color or BLACK_C)
+    U.text(bb, x, baseline, face, s, bold, color)
 end
 
 function SetupView:drawCentered(bb, cx, baseline, face, s, bold, color)
-    self:drawText(bb, cx - math.floor(self:textW(face, s, bold) / 2), baseline, face, s, bold, color)
+    U.centered(bb, cx, baseline, face, s, bold, color)
 end
 
 -- A full-width selectable row. Selected rows are filled dark with light text,
@@ -143,6 +141,18 @@ function SetupView:paintTo(bb, x, y)
     textBtn(tr, T("statistics"))
     self.hit.settings, self.hit.stats = sr, tr
     yy = yy + set_h + math.floor(unit * 0.7)
+
+    -- Resume: a full-width filled button offered only when a game was left in
+    -- progress. Tapping it reopens that game rather than starting a new one.
+    if self.has_saved then
+        local rh = math.floor(unit * 1.8)
+        local rr = rect(self.col_x, yy, self.col_w, rh)
+        bb:paintRoundedRect(rr.x, rr.y, rr.w, rr.h, BLACK_C, math.floor(unit * 0.35))
+        self:drawCentered(bb, cx, rr.y + math.floor(rr.h / 2) + math.floor(self.face.size * 0.35),
+                          self.face, T("resume_game"), true, WHITE_C)
+        self.hit.resume = rr
+        yy = yy + rh + math.floor(unit * 0.9)
+    end
 
     -- Opponent
     self:drawText(bb, self.col_x, yy, self.face_small, T("opponent"), true, BLACK_C)
@@ -232,6 +242,11 @@ function SetupView:onTap(_, ges)
 
     if inRect(hit.close, x, y) then
         UIManager:close(self)
+        return true
+    end
+    if inRect(hit.resume, x, y) then
+        UIManager:close(self)
+        if self.on_resume then self.on_resume() end
         return true
     end
     if inRect(hit.settings, x, y) then

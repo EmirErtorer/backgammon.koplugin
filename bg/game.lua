@@ -44,7 +44,18 @@ function M.new()
     g.dests = {}              -- destinations for the currently selected point
     g.dests_n = 0
     g.undo = { from = 0, to = 0, hit = false }
+    -- per-turn take-back stack: one slot per die that can be played (four on a
+    -- double), reused across turns so undo allocates nothing. turn_n is how many
+    -- of this turn's moves are still on the stack.
+    g.turn_undo = {}
+    for i = 1, 4 do g.turn_undo[i] = { from = 0, to = 0, die = 0, hit = false } end
+    g.turn_n = 0
+    g._undo_scratch = { from = 0, to = 0, hit = false }
     g.score = { [WHITE] = 0, [BLACK] = 0 }
+    -- doubling cube: value 1..64 and who owns it (nil = centred, either side may
+    -- double). pending_double holds an offer awaiting a take/drop.
+    g.cube = { value = 1, owner = nil }
+    g.pending_double = nil
     g.games = 0
     g.selected = nil
     g.message = nil
@@ -72,6 +83,10 @@ function Game:newGame()
     self.win_points = 0
     self.history = {}
     self._turn = nil
+    self.turn_n = 0
+    self.cube.value = 1
+    self.cube.owner = nil
+    self.pending_double = nil
 end
 
 -- Copy the shared analyse() result into our own arrays, since the engine hands
@@ -111,6 +126,7 @@ function Game:roll()
     self.rolled[1], self.rolled[2] = self.dice[1], self.dice[2]
     self.selected = nil
     self.dests_n = 0
+    self.turn_n = 0            -- fresh turn: nothing to take back yet
     self:refreshLegal()
     -- start recording this turn for the review (a dead roll records nothing)
     self._turn = { player = self.player, ndice = self.ndice, dice = {},
@@ -142,6 +158,7 @@ function Game:passTurn()
     self.legal_n = 0
     self.selected = nil
     self.dests_n = 0
+    self.turn_n = 0            -- the turn is committed; nothing left to take back
     self.phase = "roll"
 end
 
@@ -207,6 +224,11 @@ function Game:move(to)
     self.last_hit = self.undo.hit
     if self._turn then self._turn.moves[#self._turn.moves + 1] = { from = from, to = to, die = die } end
 
+    -- record the move so it can be taken back until the turn is committed
+    self.turn_n = self.turn_n + 1
+    local e = self.turn_undo[self.turn_n]
+    e.from, e.to, e.die, e.hit = from, to, die, self.undo.hit
+
     -- consume one die of that value
     for i = 1, self.ndice do
         if self.dice[i] == die then
@@ -223,7 +245,8 @@ function Game:move(to)
     if w then
         self:finalizeTurn()
         self.winner = w
-        self.win_points = R.scoreFor(self.state, w)
+        -- gammon/backgammon multiplier times the doubling-cube stake
+        self.win_points = R.scoreFor(self.state, w) * self.cube.value
         self.score[w] = self.score[w] + self.win_points
         self.games = self.games + 1
         self.phase = "over"
@@ -250,6 +273,146 @@ end
 function Game:moveDirect(from, to)
     self.selected = from
     return self:move(to)
+end
+
+--- Can the current player take back a move? Only while the dice are still on the
+--- table (phase "move") and at least one move has been made this turn.
+function Game:canUndo()
+    return self.phase == "move" and self.turn_n > 0
+end
+
+--- Take back the last move of this turn: reverse the checker (restoring any
+--- checker it hit), hand the die back, and drop it from the review history.
+--- Returns true if a move was undone.
+function Game:undoLast()
+    if not self:canUndo() then return false end
+    local e = self.turn_undo[self.turn_n]
+    self.turn_n = self.turn_n - 1
+
+    local u = self._undo_scratch
+    u.from, u.to, u.hit = e.from, e.to, e.hit
+    R.undoMove(self.state, self.player, u)
+
+    -- give the die back and refresh the legal moves for the restored position
+    self.ndice = self.ndice + 1
+    self.dice[self.ndice] = e.die
+    if self._turn and #self._turn.moves > 0 then
+        self._turn.moves[#self._turn.moves] = nil
+    end
+    self.selected = nil
+    self.dests_n = 0
+    self.last_hit = false
+    self:refreshLegal()
+    return true
+end
+
+--------------------------------------------------------------------------
+-- doubling cube
+--------------------------------------------------------------------------
+
+local CUBE_MAX = 64
+
+--- May `player` offer a double right now? Only at the start of their turn
+--- (before rolling), when the cube is centred or theirs, and not maxed out.
+function Game:canDouble(player)
+    if self.phase ~= "roll" then return false end
+    if self.winner or self.pending_double then return false end
+    if self.cube.value >= CUBE_MAX then return false end
+    return self.cube.owner == nil or self.cube.owner == player
+end
+
+--- Offer a double. The proposed value is recorded; the opponent then takes or
+--- drops. Returns the proposed value, or nil if not allowed.
+function Game:offerDouble(player)
+    if not self:canDouble(player) then return nil end
+    self.pending_double = { by = player, value = self.cube.value * 2 }
+    return self.pending_double.value
+end
+
+--- Accept the pending double: the cube turns and passes to the taker (the
+--- opponent of the doubler), who now owns it. The doubler stays on roll.
+function Game:takeDouble()
+    local pd = self.pending_double
+    if not pd then return false end
+    self.cube.value = pd.value
+    self.cube.owner = -pd.by
+    self.pending_double = nil
+    return true
+end
+
+--- Decline the pending double: the doubler wins the current stake (the value
+--- before the refused double), and the game is over.
+function Game:dropDouble()
+    local pd = self.pending_double
+    if not pd then return false end
+    self.pending_double = nil
+    local w = pd.by
+    self.winner = w
+    self.win_points = self.cube.value
+    self.score[w] = self.score[w] + self.win_points
+    self.games = self.games + 1
+    self.phase = "over"
+    self.legal_n = 0
+    self:finalizeTurn()
+    self.message = (self.win_points == 1) and T("win_1", colorName(w))
+        or T("win_n", colorName(w), self.win_points)
+    return true
+end
+
+--------------------------------------------------------------------------
+-- save / resume
+--------------------------------------------------------------------------
+
+-- A plain snapshot of the game (position, whose turn, dice still to play, the
+-- session score and the cube) that survives being written to disk and read back.
+-- Transient bits -- the current selection, the take-back stack and the review
+-- history -- are deliberately left out.
+function Game:serialize()
+    local s = self.state
+    local pts = {}
+    for i = 1, 24 do pts[i] = s.points[i] end
+    local dice = {}
+    for i = 1, self.ndice do dice[i] = self.dice[i] end
+    return {
+        player = self.player, phase = self.phase, ndice = self.ndice, dice = dice,
+        points = pts, barW = s.bar[WHITE], barB = s.bar[BLACK],
+        offW = s.off[WHITE], offB = s.off[BLACK],
+        scoreW = self.score[WHITE], scoreB = self.score[BLACK], games = self.games,
+        cubeValue = self.cube.value, cubeOwner = self.cube.owner or 0,
+    }
+end
+
+-- Rebuild the game from a serialize() snapshot. Returns self.
+function Game:restore(t)
+    local s = self.state
+    for i = 1, 24 do s.points[i] = t.points[i] or 0 end
+    s.bar[WHITE], s.bar[BLACK] = t.barW or 0, t.barB or 0
+    s.off[WHITE], s.off[BLACK] = t.offW or 0, t.offB or 0
+    self.player = t.player or WHITE
+    self.phase = t.phase or "roll"
+    self.ndice = t.ndice or 0
+    for i = 1, 4 do self.dice[i] = 0 end
+    for i = 1, self.ndice do self.dice[i] = t.dice[i] end
+    self.rolled[1], self.rolled[2] = self.dice[1] or 0, self.dice[2] or 0
+    self.score[WHITE], self.score[BLACK] = t.scoreW or 0, t.scoreB or 0
+    self.games = t.games or 0
+    self.cube.value = t.cubeValue or 1
+    self.cube.owner = (t.cubeOwner and t.cubeOwner ~= 0) and t.cubeOwner or nil
+    self.pending_double = nil
+    self.selected = nil
+    self.dests_n = 0
+    self.turn_n = 0
+    self.winner = nil
+    self.win_points = 0
+    self.message = nil
+    self.history = {}
+    self._turn = nil
+    if self.phase == "move" and self.ndice > 0 then
+        self:refreshLegal()
+    else
+        self.legal_n = 0
+    end
+    return self
 end
 
 function Game:pipCount(player)

@@ -15,6 +15,7 @@ local UIManager = require("ui/uimanager")
 
 local Settings = require("bg/settings")
 local T = require("bg/i18n")
+local U = require("bg/uiutil")
 
 local Screen = Device.screen
 local BLACK_C = Blitbuffer.COLOR_BLACK
@@ -22,14 +23,14 @@ local WHITE_C = Blitbuffer.COLOR_WHITE
 
 local SettingsView = InputContainer:extend{ name = "backgammon_settings", covers_fullscreen = true }
 
-local function rect(x, y, w, h) return { x = x, y = y, w = w, h = h } end
-local function inRect(r, x, y) return r and x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h end
+local rect, inRect = U.rect, U.inRect
 
 function SettingsView:init()
     require("bg/i18n").refresh()
     self.user_color = Settings.get("user_color")
     self.bear_off = Settings.get("bear_off")
     self.flip_turns = Settings.get("flip_turns")
+    self.cube = Settings.get("cube")
     self.lang = Settings.get("language")
     self.dimen = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
     self.hit = {}
@@ -55,12 +56,12 @@ function SettingsView:computeLayout()
     self.face_small = Font:getFace("cfont", math.floor(unit * 0.72 / dpi))
 end
 
-function SettingsView:textW(face, s, b) return RenderText:sizeUtf8Text(0, 100000, face, s, false, b or false).x end
+function SettingsView:textW(face, s, b) return U.textW(face, s, b) end
 function SettingsView:drawText(bb, x, base, face, s, b, color)
-    RenderText:renderUtf8Text(bb, x, base, face, s, false, b or false, color or BLACK_C)
+    U.text(bb, x, base, face, s, b, color)
 end
 function SettingsView:drawCentered(bb, cx, base, face, s, b, color)
-    self:drawText(bb, cx - math.floor(self:textW(face, s, b) / 2), base, face, s, b, color)
+    U.centered(bb, cx, base, face, s, b, color)
 end
 
 function SettingsView:drawChoice(bb, r, label, selected)
@@ -118,6 +119,10 @@ function SettingsView:paintTo(bb, x, y)
         { label = T("on"), value = "on", hit = "flip_on" },
         { label = T("off"), value = "off", hit = "flip_off" },
     }, self.flip_turns)
+    yy = self:section(bb, yy, T("doubling_cube"), {
+        { label = T("on"), value = "on", hit = "cube_on" },
+        { label = T("off"), value = "off", hit = "cube_off" },
+    }, self.cube)
     yy = self:section(bb, yy, T("language"), {
         { label = T("lang_auto"), value = "auto", hit = "lang_auto" },
         { label = T("lang_en"), value = "en", hit = "lang_en" },
@@ -159,6 +164,8 @@ function SettingsView:onTap(_, ges)
     elseif inRect(hit.right, x, y) then set("bear_off", "bear_off", "right")
     elseif inRect(hit.flip_on, x, y) then set("flip_turns", "flip_turns", "on")
     elseif inRect(hit.flip_off, x, y) then set("flip_turns", "flip_turns", "off")
+    elseif inRect(hit.cube_on, x, y) then set("cube", "cube", "on")
+    elseif inRect(hit.cube_off, x, y) then set("cube", "cube", "off")
     elseif inRect(hit.lang_auto, x, y) then set("lang", "language", "auto")
     elseif inRect(hit.lang_en, x, y) then set("lang", "language", "en")
     elseif inRect(hit.lang_tr, x, y) then set("lang", "language", "tr")

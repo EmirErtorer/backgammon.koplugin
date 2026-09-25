@@ -489,6 +489,9 @@ function BoardView:paintTo(bb, x, y)
         end
     end
 
+    -- doubling cube (in the tray column, on the owner's side)
+    self:paintCube(bb)
+
     -- highlights
     if g.selected then
         local r = (g.selected == BAR)
@@ -547,6 +550,36 @@ function BoardView:paintDice(bb)
     for i = 1, n do
         self:drawDie(bb, x + (i - 1) * (size + gap), y, size, values[i], i > g.ndice)
     end
+end
+
+-- The doubling cube: a small numbered square in the tray column. Centred on the
+-- middle band when the cube is unowned; tucked against the band-facing end of
+-- the owner's tray otherwise (that end fills with borne-off checkers last, so
+-- they rarely overlap). Hidden when the cube is switched off.
+function BoardView:paintCube(bb)
+    if not self.cube_on then return end
+    local L, g = self.L, self.game
+    local size = math.min(math.floor(L.tray_w * 0.62), math.floor(L.band_h * 1.1))
+    if size < 16 then size = 16 end
+    local cx = L.tray_x + math.floor(L.tray_w / 2)
+    local val = (g.pending_double and g.pending_double.value) or g.cube.value
+    local owner = g.cube.owner
+    local y
+    if owner == nil then
+        y = L.band_y + math.floor((L.band_h - size) / 2)
+    else
+        local tr = (owner == WHITE) and L.tray_white or L.tray_black
+        if self:isBottom(owner) then
+            y = tr.y + 4
+        else
+            y = tr.y + tr.h - size - 4
+        end
+    end
+    local x = cx - math.floor(size / 2)
+    local radius = math.floor(size * 0.18)
+    bb:paintRoundedRect(x, y, size, size, WHITE_C, radius)
+    bb:paintBorder(x, y, size, size, math.max(2, math.floor(size * 0.08)), BLACK_C, radius)
+    self:centreText(bb, rect(x, y, size, size), L.face_small, tostring(val), true)
 end
 
 function BoardView:paintChrome(bb)
@@ -626,10 +659,18 @@ function BoardView:paintChrome(bb)
     bb:paintBorder(L.new_btn.x, L.new_btn.y, L.new_btn.w, L.new_btn.h, 2, BLACK_C, L.btn_r)
     self:centreText(bb, L.new_btn, L.face_small, T("new_game"))
 
-    -- Review button, offered in the bottom centre once a game is over
+    -- Bottom centre: the Review button once a game is over, or an Undo button
+    -- while the player still has a move of this turn to take back. The two never
+    -- want the slot at the same time (over vs. move), so they share it.
     if g.phase == "over" and g.history and #g.history > 0 and L.review_btn then
         bb:paintBorder(L.review_btn.x, L.review_btn.y, L.review_btn.w, L.review_btn.h, 2, BLACK_C, L.btn_r)
         self:centreText(bb, L.review_btn, L.face_small, T("review"))
+    elseif self:showUndoButton() and L.review_btn then
+        bb:paintBorder(L.review_btn.x, L.review_btn.y, L.review_btn.w, L.review_btn.h, 2, BLACK_C, L.btn_r)
+        self:centreText(bb, L.review_btn, L.face_small, T("undo"))
+    elseif self:showDoubleButton() and L.review_btn then
+        bb:paintBorder(L.review_btn.x, L.review_btn.y, L.review_btn.w, L.review_btn.h, 2, BLACK_C, L.btn_r)
+        self:centreText(bb, L.review_btn, L.face_small, T("double"))
     end
 
     self:drawRotateIcon(bb, L.rotate_btn)
@@ -670,6 +711,121 @@ function BoardView:showRollButton()
     if self.ai_busy then return false end
     local phase = self.game.phase
     return phase == "roll" or phase == "opening" or phase == "over"
+end
+
+-- The take-back button is offered only on the human's own move, once at least
+-- one checker has been played this turn and while the dice are still on the
+-- table. Never during the computer's turn.
+function BoardView:showUndoButton()
+    if self.ai_busy then return false end
+    local g = self.game
+    if self.ai_side and g.player == self.ai_side then return false end
+    return g:canUndo()
+end
+
+-- Take back the last checker of this turn and repaint the board.
+function BoardView:onUndo()
+    local g = self.game
+    if not g:canUndo() then return end
+    g:undoLast()
+    self:clearDice()
+    for i = 1, g.ndice do self.shown_dice[i] = g.dice[i] end
+    self.notice = nil
+    UIManager:setDirty(self, "ui")
+end
+
+--------------------------------------------------------------------------
+-- doubling cube
+--------------------------------------------------------------------------
+
+-- Is the Double button offered right now? Only on the human's own roll, with the
+-- cube enabled and available. The computer decides its own doubles in aiStart.
+function BoardView:showDoubleButton()
+    if not self.cube_on or self.ai_busy then return false end
+    local g = self.game
+    if g.phase ~= "roll" then return false end
+    if self.ai_side and g.player == self.ai_side then return false end
+    return g:canDouble(g.player)
+end
+
+-- The human offers a double. Against the computer it answers itself after a
+-- beat; in a two-player game the other person is asked.
+function BoardView:onDouble()
+    local g = self.game
+    local doubler = g.player
+    if not g:offerDouble(doubler) then return end
+    if self.ai_side then
+        self.ai_busy = true
+        self.notice = T("computer_thinking")
+        g.message = T("cube_offer", T("you"), g.pending_double.value)
+        self:refreshTop()
+        self:refreshBottom()
+        UIManager:scheduleIn(AI_DELAY_FIRST, self._cube_response)
+    else
+        self:promptTake(doubler)
+    end
+end
+
+-- Ask a person to take or drop the pending double (KOReader's stock ConfirmBox,
+-- required lazily so headless tests never load it).
+function BoardView:promptTake(doubler)
+    local g = self.game
+    if not g.pending_double then return end
+    local ConfirmBox = require("ui/widget/confirmbox")
+    UIManager:show(ConfirmBox:new{
+        text = T("cube_take_q", self:sideName(doubler), g.pending_double.value),
+        ok_text = T("take"),
+        cancel_text = T("drop"),
+        ok_callback = function() self:resolveTake() end,
+        cancel_callback = function() self:resolveDrop() end,
+    })
+end
+
+-- A person accepted the double: turn the cube and carry on. The doubler is on
+-- roll; if that is the computer, let it roll now.
+function BoardView:resolveTake()
+    local g = self.game
+    local pd = g.pending_double
+    if not pd then return end
+    local doubler = pd.by
+    g:takeDouble()
+    self.notice = nil
+    g.message = T("cube_at", g.cube.value)
+    self.ai_busy = false
+    UIManager:setDirty(self, "ui")
+    if self.ai_side and doubler == self.ai_side then
+        self:maybeStartAI()
+    end
+end
+
+-- A person declined the double: the doubler wins the current stake.
+function BoardView:resolveDrop()
+    local g = self.game
+    if not g.pending_double then return end
+    g:dropDouble()
+    self.notice = nil
+    self.ai_busy = false
+    self:recordResult(g.winner)
+    UIManager:setDirty(self, "flashui")
+end
+
+-- The computer answers a double the human offered.
+function BoardView:aiCubeResponse()
+    if self.closing then return end
+    local g = self.game
+    local pd = g.pending_double
+    if not pd then self.ai_busy = false; return end
+    local AI = require("bg/ai")
+    if AI.shouldTake(g.state, self.ai_side, pd.by, self.ai_level) then
+        g:takeDouble()
+        self.notice = nil
+        g.message = T("cube_takes", T("computer"))
+        self.ai_busy = false
+        UIManager:setDirty(self, "ui")
+        -- the human (doubler) is on roll again; they tap Roll to continue
+    else
+        self:resolveDrop()      -- computer drops, the human wins the stake
+    end
 end
 
 --------------------------------------------------------------------------
@@ -715,7 +871,10 @@ end
 -- The bottom strip: message line and the three buttons, which all sit at the
 -- same height, so one bounding box covers them in a single refresh.
 function BoardView:refreshBottom()
-    self:refreshRects("ui", self.L.msg, self.L.roll_btn)
+    -- include the bottom-centre slot: the Undo / Double / Review button that
+    -- lives there appears and disappears with the phase, so it has to be in the
+    -- box that a turn change repaints or it would linger a frame behind.
+    self:refreshRects("ui", self.L.msg, self.L.roll_btn, self.L.review_btn)
     self.last_message = self.game and self.game.message
 end
 
@@ -744,11 +903,17 @@ function BoardView:init()
     local Settings = require("bg/settings")
     require("bg/i18n").refresh()      -- pick up the current language choice
     self.bottom_color = (Settings.get("user_color") == "black") and BLACK or WHITE
+    -- A resumed game keeps the colour layout it was played with, so the computer
+    -- stays on the same side no matter how the colour setting has changed since.
+    if self.resume and self.resume.bottom then
+        self.bottom_color = self.resume.bottom
+    end
     -- base orientation from settings; the effective flip may add a 180° turn
     -- each move when "flip board each turn" is on (two-player only)
     self.base_flip_v = (self.bottom_color == BLACK)
     self.base_flip_h = (Settings.get("bear_off") == "left")
     self.flip_2p = (Settings.get("flip_turns") == "on")
+    self.cube_on = (Settings.get("cube") == "on")
     self.flip_v = self.base_flip_v
     self.flip_h = self.base_flip_h
 
@@ -770,6 +935,19 @@ function BoardView:init()
         self.ai_slow = (lv and lv.eval == "gnu" and (lv.ply or 1) >= 2) or false
     end
 
+    -- Resume a saved game if one was handed in, replacing the fresh position.
+    -- A snapshot that fails the checker-count invariant is treated as corrupt and
+    -- discarded rather than shown.
+    if self.resume then
+        self.game:restore(self.resume)
+        if not R.check(self.game.state) then
+            self.game:newGame()
+            require("bg/settings").clearGame()
+        end
+        self:clearDice()
+        for i = 1, self.game.ndice do self.shown_dice[i] = self.game.dice[i] end
+    end
+
     self:computeLayout()
 
     -- InputContainer:_init has already made these tables and may have put a
@@ -782,9 +960,11 @@ function BoardView:init()
     end
 
     -- bound once; the computer's turn advances through these scheduled steps
+    self._ai_start = function() self:aiStart() end
     self._ai_roll = function() self:aiRoll() end
     self._ai_step = function() self:aiStep() end
     self._skip_pass = function() self:skipPass() end
+    self._cube_response = function() self:aiCubeResponse() end
 end
 
 -- Rebuild for a new screen size, keeping the game in progress. self.dimen is
@@ -842,10 +1022,21 @@ end
 
 function BoardView:onCloseWidget()
     self.closing = true
+    -- Persist an in-progress game so it can be resumed, unless the player is
+    -- abandoning it (Menu) or it is already finished -- either way, clear any
+    -- stored game so the picker does not offer a stale resume.
+    local Settings = require("bg/settings")
+    if not self._abandon and self.game and self:gameInProgress() then
+        self:saveGame()
+    else
+        Settings.clearGame()
+    end
     if UIManager.unschedule then
+        if self._ai_start then UIManager:unschedule(self._ai_start) end
         if self._ai_roll then UIManager:unschedule(self._ai_roll) end
         if self._ai_step then UIManager:unschedule(self._ai_step) end
         if self._skip_pass then UIManager:unschedule(self._skip_pass) end
+        if self._cube_response then UIManager:unschedule(self._cube_response) end
     end
     -- put the device back the way it was before the game opened, and force a
     -- full-screen refresh so the panel is left clean (and, on devices where
@@ -876,8 +1067,60 @@ end
 -- holds memory once we reopen the menu.
 function BoardView:goToMenu()
     local on_menu = self.on_menu
+    self._abandon = true    -- abandoning: onCloseWidget must not save this game
     UIManager:close(self)
     if on_menu then on_menu() end
+end
+
+-- Start a fresh game on the same board, keeping the session scoreboard. Shared
+-- by the New game button and the "next game" path once a game is over.
+function BoardView:doNewGame()
+    local g = self.game
+    g:newGame()
+    self:clearDice()
+    self.notice = nil
+    self.skips = 0
+    UIManager:setDirty(self, "flashui")
+end
+
+-- Is there a game worth not throwing away by mistake? True once any move has
+-- been played this game, a turn is under way, or the session has a score on the
+-- board; false on the very first opening screen where nothing would be lost.
+function BoardView:gameInProgress()
+    local g = self.game
+    if not g or g.phase == "over" then return false end
+    if g.history and #g.history > 0 then return true end
+    if g.phase == "move" or g.phase == "roll" then return true end
+    return g.score[WHITE] > 0 or g.score[BLACK] > 0
+end
+
+-- Ask before an action that would discard the current game. Uses KOReader's
+-- stock ConfirmBox (required lazily so headless tests never load it), and skips
+-- the prompt entirely when there is nothing worth keeping.
+function BoardView:confirmDiscard(text, ok_label, action)
+    if not self:gameInProgress() then
+        action()
+        return
+    end
+    local ConfirmBox = require("ui/widget/confirmbox")
+    UIManager:show(ConfirmBox:new{
+        text = text,
+        ok_text = ok_label,
+        cancel_text = T("keep_playing"),
+        ok_callback = action,
+    })
+end
+
+-- Save the current game so it can be resumed later. Includes the opponent, the
+-- difficulty and which colour sits at the bottom, so a resumed game plays out
+-- exactly as it was left.
+function BoardView:saveGame()
+    local Settings = require("bg/settings")
+    local t = self.game:serialize()
+    t.opponent = self.opponent
+    t.ai_level = self.ai_level
+    t.bottom = self.bottom_color
+    Settings.saveGame(t)
 end
 
 -- Open the post-game review over the finished board.
@@ -922,7 +1165,7 @@ function BoardView:onTap(_, ges)
         if inRect(L.close_btn, x, y) then
             UIManager:close(self)
         elseif self.on_menu and L.menu_btn and inRect(L.menu_btn, x, y) then
-            self:goToMenu()
+            self:confirmDiscard(T("abandon_q"), T("abandon"), function() self:goToMenu() end)
         end
         return true
     end
@@ -932,15 +1175,19 @@ function BoardView:onTap(_, ges)
         return true
     end
     if inRect(L.new_btn, x, y) then
-        g:newGame()
-        self:clearDice()
-        self.notice = nil
-        self.skips = 0
-        UIManager:setDirty(self, "flashui")
+        self:confirmDiscard(T("new_game_q"), T("new_game"), function() self:doNewGame() end)
         return true
     end
     if g.phase == "over" and g.history and #g.history > 0 and inRect(L.review_btn, x, y) then
         self:openReview()
+        return true
+    end
+    if self:showUndoButton() and inRect(L.review_btn, x, y) then
+        self:onUndo()
+        return true
+    end
+    if self:showDoubleButton() and inRect(L.review_btn, x, y) then
+        self:onDouble()
         return true
     end
     if self:showRollButton() and inRect(L.roll_btn, x, y) then
@@ -952,7 +1199,7 @@ function BoardView:onTap(_, ges)
         return true
     end
     if self.on_menu and L.menu_btn and inRect(L.menu_btn, x, y) then
-        self:goToMenu()
+        self:confirmDiscard(T("abandon_q"), T("abandon"), function() self:goToMenu() end)
         return true
     end
 
@@ -1049,11 +1296,7 @@ function BoardView:onRollButton()
     local g = self.game
 
     if g.phase == "over" then
-        g:newGame()
-        self:clearDice()
-        self.notice = nil
-        self.skips = 0
-        UIManager:setDirty(self, "flashui")
+        self:doNewGame()
         return
     end
 
@@ -1204,8 +1447,9 @@ function BoardView:playMove(to)
     -- Everything that changed on the board (the checker's old and new squares,
     -- the cleared highlights, the consumed die, a hit on the bar) sits inside
     -- one bounding box, so a move is a single refresh rather than several
-    -- sequential e ink updates.
-    self:refreshRects("ui", region, hit_r, L.dice_area)
+    -- sequential e ink updates. The bottom-centre slot is included because the
+    -- Undo button appears as soon as a checker has been played this turn.
+    self:refreshRects("ui", region, hit_r, L.dice_area, L.review_btn)
 
     if res == "turn_over" then
         g:passTurn()
@@ -1236,8 +1480,31 @@ function BoardView:maybeStartAI()
     if g.phase == "roll" and g.player == self.ai_side then
         self.ai_busy = true
         self:refreshTop()
-        UIManager:scheduleIn(AI_DELAY_ROLL, self._ai_roll)
+        UIManager:scheduleIn(AI_DELAY_ROLL, self._ai_start)
     end
+end
+
+-- The computer's turn begins here. Before rolling it may offer a double; if it
+-- does, the human is asked to take or drop and the roll waits on that answer.
+-- Otherwise it rolls straight away.
+function BoardView:aiStart()
+    if self.closing then return end
+    local g = self.game
+    if g.phase ~= "roll" or g.player ~= self.ai_side then
+        self.ai_busy = false
+        return
+    end
+    if self.cube_on and g:canDouble(g.player) then
+        local AI = require("bg/ai")
+        if AI.shouldDouble(g.state, g.player, self.ai_level) then
+            g:offerDouble(g.player)
+            g.message = T("cube_offer", T("computer"), g.pending_double.value)
+            self:refreshBottom()
+            self:promptTake(g.player)     -- ask the human; roll waits on the answer
+            return
+        end
+    end
+    self:aiRoll()
 end
 
 function BoardView:aiRoll()

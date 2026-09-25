@@ -9,10 +9,13 @@ well as shade, and small screen refreshes so play stays responsive.
 
 - Two players on one device, or a computer opponent with five difficulty levels
 - Full standard rules: hitting, the bar, bearing off, forced moves, doubles
+- Doubling cube (optional), with the computer offering and answering doubles
+- Take back a checker before your turn ends; abandoning a game asks first
+- Games in progress are saved on exit and offered again as **Resume game**
 - Tap to select a checker, tap a highlighted point to move — no dragging
 - Session scoreboard with 1 / 2 / 3 point scoring (mars and backgammon)
 - Portrait and landscape, switchable from a button in-game
-- Pure Lua, no external dependencies, nothing written to disk
+- Pure Lua, no external dependencies
 
 <img width="1448" height="1072" alt="backgammon_landscape" src="https://github.com/user-attachments/assets/ff82c57c-c1fc-49a2-a6fc-17443ca15987" />
 <img width="1072" height="1448" alt="backgammon_portrait" src="https://github.com/user-attachments/assets/89d08650-7cf1-47af-a394-4e38bc3aa3ac" />
@@ -57,9 +60,23 @@ dice on the bar. Tap the same checker again, or an empty area, to deselect.
 If a throw has no legal move at all, the message line says so and the button
 changes to **Continue** to hand over.
 
-**Scoreboard.** The score across the top counts points for the current session
-only. It resets to zero each time the plugin is opened and is never saved.
-**New game** deals a fresh board and keeps the running score; **Close** exits.
+**Take back.** After you have moved a checker but before the turn passes, an
+**Undo** button appears in the bottom centre. It steps back through the moves of
+the current turn one at a time, handing each die back.
+
+**Doubling.** The doubling cube is off by default; switch it on in Board &
+colours. A **Double** button then sits in the bottom centre before you roll.
+Offer a double and the other side takes or drops; a drop ends the game for the
+current stake, a take turns the cube and hands it to the taker. The computer
+offers and answers doubles on its own.
+
+**Scoreboard.** The score across the top counts points for the current session.
+Wins are multiplied by the cube. **New game** deals a fresh board and keeps the
+running score; **Close** saves the game in progress and exits. Abandoning a game
+with **Menu** or starting a **New game** mid-play asks for confirmation first.
+
+**Resuming.** A game left unfinished when you close is offered again as **Resume
+game** at the top of the setup screen the next time you open Backgammon.
 
 **Orientation.** The button in the top-left of the header flips the board
 between portrait and landscape without physically rotating the device.

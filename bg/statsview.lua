@@ -13,6 +13,7 @@ local UIManager = require("ui/uimanager")
 local AI = require("bg/ai")
 local Settings = require("bg/settings")
 local T = require("bg/i18n")
+local U = require("bg/uiutil")
 
 local Screen = Device.screen
 local BLACK_C = Blitbuffer.COLOR_BLACK
@@ -20,8 +21,7 @@ local WHITE_C = Blitbuffer.COLOR_WHITE
 
 local StatsView = InputContainer:extend{ name = "backgammon_stats", covers_fullscreen = true }
 
-local function rect(x, y, w, h) return { x = x, y = y, w = w, h = h } end
-local function inRect(r, x, y) return r and x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h end
+local rect, inRect = U.rect, U.inRect
 
 function StatsView:init()
     self.dimen = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
@@ -46,12 +46,12 @@ function StatsView:computeLayout()
     self.face_small = Font:getFace("cfont", math.floor(unit * 0.72 / dpi))
 end
 
-function StatsView:tw(face, s, b) return RenderText:sizeUtf8Text(0, 100000, face, s, false, b or false).x end
+function StatsView:tw(face, s, b) return U.textW(face, s, b) end
 function StatsView:draw(bb, x, base, face, s, b, color)
-    RenderText:renderUtf8Text(bb, x, base, face, s, false, b or false, color or BLACK_C)
+    U.text(bb, x, base, face, s, b, color)
 end
 function StatsView:centre(bb, cx, base, face, s, b, color)
-    self:draw(bb, cx - math.floor(self:tw(face, s, b) / 2), base, face, s, b, color)
+    U.centered(bb, cx, base, face, s, b, color)
 end
 
 function StatsView:paintTo(bb, x, y)

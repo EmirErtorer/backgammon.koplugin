@@ -547,4 +547,52 @@ function AI.positionValue(s, sideToMove)
     return GNU.equity(toGnu(s, sideToMove), gnu_nets) or 0.0
 end
 
+-- Probability (0..1) that `sideToMove` (on roll) wins the game, via the net.
+-- This is what the review turns into a plain "winning chances" percentage.
+function AI.positionWin(s, sideToMove)
+    gnu_nets = gnu_nets or GNU.load()
+    local w = R.winner(s)
+    if w == sideToMove then return 1.0 end
+    if w == -sideToMove then return 0.0 end
+    local _, out = GNU.equity(toGnu(s, sideToMove), gnu_nets)
+    return (out and out[1]) or 0.5
+end
+
+--------------------------------------------------------------------------
+-- doubling-cube decisions (money play). Heuristics over the net's win
+-- probability -- not full cubeful equity, but a sound, human-like cube: double
+-- when clearly ahead but not so far that playing on for a gammon is better, and
+-- take unless the position is close to hopeless.
+--------------------------------------------------------------------------
+
+-- Estimate `player`'s chance of winning (on roll). The neural-net levels ask the
+-- net; the lighter levels use a cheap pip-count estimate, so a Beginner game
+-- never has to load the net just to judge the cube, and its cube sense stays as
+-- rough as its play.
+function AI.winEstimate(s, player, level_id)
+    local lv = level_id and AI.level(level_id)
+    if lv and lv.eval == "gnu" then
+        return AI.positionWin(s, player)
+    end
+    local mine = R.pipCount(s, player)
+    local theirs = R.pipCount(s, -player)
+    local p = 0.5 + (theirs - mine) / 80    -- gentle slope on the pip lead
+    if p < 0.02 then return 0.02 elseif p > 0.98 then return 0.98 end
+    return p
+end
+
+-- Should `player` (on roll now, before rolling) offer a double?
+function AI.shouldDouble(s, player, level_id)
+    local p = AI.winEstimate(s, player, level_id)
+    return p >= 0.70 and p <= 0.90
+end
+
+-- Should `taker` accept a double? After taking, `on_roll` (the doubler) rolls
+-- next, so the taker's winning chance is 1 minus the doubler's on-roll chance.
+-- The money take point is about 25%; a little lower here to reflect recube value.
+function AI.shouldTake(s, taker, on_roll, level_id)
+    local taker_win = 1 - AI.winEstimate(s, on_roll, level_id)
+    return taker_win >= 0.22
+end
+
 return AI
