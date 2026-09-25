@@ -104,8 +104,10 @@ function SetupView:drawRow(bb, r, title, subtitle, selected)
         local cr = math.floor(self.unit * 0.5)
         local cx = r.x + r.w - pad - cr
         local cy = r.y + math.floor(r.h / 2)
-        bb:paintCircle(cx, cy, cr, WHITE_C)
-        bb:paintCircle(cx, cy, math.floor(cr * 0.5), BLACK_C)
+        -- U.paintCircle: same pixels as bb:paintCircle, but filled by the C
+        -- blitter, so it costs the same in portrait and landscape
+        U.paintCircle(bb, cx, cy, cr, WHITE_C)
+        U.paintCircle(bb, cx, cy, math.floor(cr * 0.5), BLACK_C)
     end
 end
 

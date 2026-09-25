@@ -57,8 +57,8 @@ of those to move the checker there; the die that move used is removed from the
 dice on the bar. Tap the same checker again, or an empty area, to deselect.
 
 **Turn end.** When all the dice have been played the turn passes automatically.
-If a throw has no legal move at all, the message line says so and the button
-changes to **Continue** to hand over.
+If a throw has no legal move at all, a note at the top says so and the turn
+passes on its own after a moment.
 
 **Take back.** After you have moved a checker but before the turn passes, an
 **Undo** button appears in the bottom centre. It steps back through the moves of
@@ -136,27 +136,18 @@ always the legal ones — occasionally fewer than expected.
 
 ## Orientation and performance
 
-Portrait is the recommended way to play. It is the native orientation of most
-e-ink panels, so it stays fast and responsive.
+Portrait and landscape play equally fast. Use the button in the top-left of the
+header to switch between them without rotating the device, or open the game while
+KOReader is already in landscape; either way works. The button always brings you
+back to the landscape you opened the game in, and closing the game returns
+KOReader to the orientation it was in.
 
-Landscape is available from the button in the top-left, but on e-ink it has to
-be redrawn with a software rotation, so it is slower. This is a device and
-KOReader characteristic, not something the game controls.
-
-**If play starts to feel sluggish** — most likely after switching orientation
-back and forth, or after opening the game while KOReader itself is already in
-landscape — **restart KOReader** and it returns to normal. For the smoothest
-experience, keep KOReader in portrait and use the in-game button for landscape
-rather than rotating the whole device.
+Earlier versions were noticeably slower in landscape. That came from the way the
+board was drawn, not from the e-ink screen, and is fixed.
 
 ## Limitations
 
-- No doubling cube.
-- No undo once a checker is tapped into place.
-- Bearing off is always on the right; the side is not configurable.
-- Landscape is slower than portrait on e-ink; portrait is recommended.
-- Nothing is saved: closing the plugin discards the score and any game in
-  progress.
+- No match play: games are not played to a set number of points.
 
 ## License
 

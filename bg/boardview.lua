@@ -5,6 +5,20 @@
 -- highlights and the text change, which keeps a repaint down to a few dozen
 -- draw calls instead of several thousand scanline rects.
 --
+-- Every repaint sticks to what the C blitter does, so it costs the same in
+-- portrait and landscape. Two things used to make landscape sluggish, and
+-- neither was the e ink panel: the round things (checkers, dice, markers) were
+-- drawn with bb:paintCircle, whose Lua pixel loops ran many times slower in
+-- whichever orientation the JIT had not warmed up in, and the board image was
+-- copied onto the rotated screen pixel by pixel. Now the round things are
+-- pre-drawn once per layout into small alpha sprites and blitted, and the board
+-- image is kept in the panel's own pixel order so it copies as plain rows.
+--
+-- The one exception is night mode on a device that cannot invert the panel in
+-- hardware: the screen buffer is then inverted, and KOReader sends text and
+-- rounded corners through its Lua fallbacks. The sprites and the board image
+-- are built with the screen's inversion, so those still go through C.
+--
 -- Refresh regions are kept as tight as the change allows, because on e ink the
 -- refresh is the expensive part, not the drawing.
 
@@ -20,12 +34,14 @@ local UIManager = require("ui/uimanager")
 local G = require("bg/game")
 local R = require("bg/rules")
 local T = require("bg/i18n")
+local U = require("bg/uiutil")
 
--- Blitbuffer.new allocates raw C memory (calloc) and registers no finalizer, so
--- a buffer that is never :free()d leaks off-heap memory the Lua GC cannot
--- reclaim. The offscreen board image is freed explicitly on close, and a GC
--- finalizer is attached as a backstop so it can never leak even if a close path
--- is ever missed.
+-- Blitbuffer.new allocates its pixels outside the Lua heap (calloc). Current
+-- KOReader attaches a finalizer that frees them, but the GC cannot see how big
+-- they are, so it may get round to it late; older builds attached none at all.
+-- The offscreen board image and the sprites are therefore freed explicitly on
+-- close and relayout, and a GC finalizer is attached here as a backstop so they
+-- can never leak even if a close path is ever missed.
 local ok_ffi, ffi = pcall(require, "ffi")
 
 local Screen = Device.screen
@@ -110,13 +126,30 @@ function BoardView:computeLayout()
     L.point_h = cd * 5
     L.band_h = math.max(cd, math.floor(cd * 1.2))
 
+    -- The Roll button on the spine is about 1.85 checkers tall in portrait,
+    -- where the middle band is roomy. In landscape the height is what limits
+    -- the board, the band is short, and the button used to shrink with it to
+    -- half that. So in landscape the band is given enough of the spare height
+    -- for a portrait-sized button (see below).
+    local landscape = pw_from_h < pw_from_w     -- height is the binding limit
+    local roll_want = math.floor(cd * 1.85)
+    local roll_gap = math.max(4, math.floor(cd * 0.1))
+
     -- On a tall screen the board would otherwise float in the middle with a
     -- lot of dead space. Real boards have points longer than the five checker
     -- stack anyway, so spend the spare height on longer points and a wider
     -- middle band, up to a point where the triangles start to look silly.
     local spare = avail_h - (L.point_h * 2 + L.band_h)
+    local dice_band = L.band_h     -- the band height the dice are sized from
     if spare > 0 then
         local band_extra = math.floor(spare * 0.3)
+        dice_band = L.band_h + band_extra
+        if landscape then
+            -- taken from the points' extra length only; they always keep the
+            -- full five-checker stack
+            local need = roll_want + roll_gap * 2 - L.band_h
+            if need > band_extra then band_extra = math.min(need, spare) end
+        end
         L.band_h = L.band_h + band_extra
         local per_row = math.floor((spare - band_extra) / 2)
         local cap = cd * 7 - L.point_h
@@ -165,8 +198,11 @@ function BoardView:computeLayout()
     -- Just the patch the dice occupy, centred in the middle band and sized for
     -- the widest case (four dice on a double). Refreshing this rather than the
     -- whole strip keeps a move's refresh box small.
-    local die_size = math.min(math.floor(L.band_h * 0.7), math.floor(pt_w * 1.1))
+    -- sized from the band before any landscape top-up for the Roll button, so
+    -- the dice keep the size they always had
+    local die_size = math.min(math.floor(dice_band * 0.7), math.floor(pt_w * 1.1))
     if die_size < 12 then die_size = 12 end
+    L.die_size = die_size
     local four_w = die_size * 4 + math.floor(die_size * 0.35) * 3
     local dice_w = math.min(four_w + die_size, inner_w)
     -- The dice group is centred on the spine (the middle of the bar), so the
@@ -223,6 +259,10 @@ function BoardView:computeLayout()
     -- white slab, and never overflows the middle band or the board.
     do
         local rh = math.max(18, math.floor(L.band_h * 0.58))
+        if landscape then
+            -- the portrait size, or as much of the band as there is room for
+            rh = math.max(rh, math.min(roll_want, L.band_h - roll_gap * 2))
+        end
         if rh > L.band_h then rh = L.band_h end
         local die = math.floor(rh * 0.55)
         local rlbl = self:textWidth(L.face_small, "Roll", true)
@@ -290,19 +330,49 @@ local function fillTriangle(bb, x, y, w, h, pointing_down, color)
     end
 end
 
-function BoardView:buildBoardBuffer()
+-- The rotation and night-mode inversion of the buffer we are painting into.
+-- (Both 0 for anything that does not carry them.)
+local function bbRotation(bb)
+    return bb.getRotation and bb:getRotation() or 0
+end
+local function bbInverse(bb)
+    return bb.getInverse and bb:getInverse() or 0
+end
+
+-- Build the board image for painting into `target` (the screen buffer).
+--
+-- On a rotated screen KOReader rotates in software: Screen.bb keeps the
+-- panel's native pixel order and every write is turned on the fly. Copying a
+-- plain board image onto it then has to go pixel by pixel through that turn,
+-- which is dozens of times slower than the row copies portrait gets. So the
+-- image is built in the panel's own pixel order instead: allocated with the
+-- panel's dimensions, drawn through the same rotation as the screen (so all
+-- the drawing below still uses screen coordinates), and then marked unrotated.
+-- blitBoard copies it as plain rows in either orientation.
+--
+-- It also takes the screen's inversion (night mode without hardware support),
+-- so the C blitter can copy it as is rather than dropping to Lua.
+function BoardView:buildBoardBuffer(target)
     local L = self.L
     if self.board_bb then
         self.board_bb:free()
         self.board_bb = nil
     end
-    local bb = Blitbuffer.new(L.board_w, L.board_h, Screen.bb:getType())
+    local rot, inv = bbRotation(target), bbInverse(target)
+    local pw, ph = L.board_w, L.board_h
+    if rot % 2 == 1 then pw, ph = ph, pw end
+    local bb = Blitbuffer.new(pw, ph, target:getType())
     self.board_bb = bb
     if ok_ffi and type(bb) == "cdata" then
         -- free() clears the allocated flag and cancels this finalizer, so an
         -- explicit free followed by GC never double-frees.
         ffi.gc(bb, bb.free)
     end
+    if bb.setRotation then
+        bb:setRotation(rot)
+        bb:setInverse(inv)
+    end
+    self.board_rot, self.board_inv, self.board_type = rot, inv, target:getType()
 
     bb:fill(WHITE_C)
     bb:paintBorder(0, 0, L.board_w, L.board_h, L.frame, BLACK_C)
@@ -329,22 +399,112 @@ function BoardView:buildBoardBuffer()
     for _, tr in ipairs({ L.tray_black, L.tray_white }) do
         bb:paintBorder(tr.x + ox + 3, tr.y + oy + 2, tr.w - 6, tr.h - 4, 2, BLACK_C)
     end
+
+    -- from here on the image is just rows in the panel's order
+    if bb.setRotation then bb:setRotation(0) end
+end
+
+-- Do the cached images still suit the buffer we are about to paint into? A
+-- rotation that keeps the screen size (landscape one way to the other, or
+-- portrait to upside down) or night mode being switched changes the pixel
+-- order or inversion without a relayout, so check here on every paint.
+function BoardView:matchTarget(bb)
+    local rot, inv = bbRotation(bb), bbInverse(bb)
+    if self.board_bb and (rot ~= self.board_rot or inv ~= self.board_inv
+                          or bb:getType() ~= self.board_type) then
+        self.board_bb:free()
+        self.board_bb = nil
+    end
+    if inv ~= self.sprite_inv then
+        self:freeSprites()
+        self.sprite_inv = inv
+    end
+end
+
+-- Copy the board image onto the screen. Unrotated, that is an ordinary blit.
+-- Rotated, the image is already in the panel's pixel order (buildBoardBuffer),
+-- so it goes in through an unrotated view of the same screen memory, at the
+-- board's physical position: plain row copies, exactly the pixels the rotated
+-- blit would have produced.
+function BoardView:blitBoard(bb)
+    local L, src = self.L, self.board_bb
+    if self.board_rot == 0 then
+        bb:blitFrom(src, L.board_x, L.board_y, 0, 0, L.board_w, L.board_h)
+        return
+    end
+    local px, py = bb:getPhysicalRect(L.board_x, L.board_y, L.board_w, L.board_h)
+    -- a view, not a copy: it points at the screen's memory and owns nothing
+    local phys = Blitbuffer.new(bb.w, bb.h, bb:getType(), bb.data, bb.stride, bb.pixel_stride)
+    phys:setInverse(bb:getInverse())
+    phys:blitFrom(src, px, py, 0, 0, src.w, src.h)
+end
+
+--------------------------------------------------------------------------
+-- sprites
+--------------------------------------------------------------------------
+
+-- A small image with an alpha channel, drawn once by `draw` and cached under
+-- `key` until the layout or night mode changes. paintTo stamps these with
+-- alphablitFrom, which the C blitter does in any rotation; the circle drawing
+-- that used to run for every checker on every repaint now runs once per sprite.
+function BoardView:sprite(key, w, h, draw)
+    local s = self.sprites[key]
+    if s then return s end
+    -- Blitbuffer.new callocs, so every pixel starts fully transparent. (Don't
+    -- :fill it -- that would make the whole square opaque.)
+    s = Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8A)
+    if ok_ffi and type(s) == "cdata" then ffi.gc(s, s.free) end
+    -- stored with the screen's inversion, so night mode still blits in C
+    if s.setInverse then s:setInverse(self.sprite_inv or 0) end
+    draw(s)
+    self.sprites[key] = s
+    return s
+end
+
+function BoardView:freeSprites()
+    if not self.sprites then return end
+    for k, s in pairs(self.sprites) do
+        s:free()
+        self.sprites[k] = nil
+    end
+end
+
+-- Stamp a checker or disc sprite (2r+1 square) with its centre at (cx, cy).
+function BoardView:stamp(bb, s, cx, cy, r)
+    bb:alphablitFrom(s, cx - r, cy - r)
+end
+
+-- A filled disc of radius r (the stack-count backing and the destination
+-- marker), same pixels as bb:paintCircle(cx, cy, r, color).
+function BoardView:discSprite(r, color)
+    local key = ((color == WHITE_C) and "dw" or "db") .. r
+    return self:sprite(key, r * 2 + 1, r * 2 + 1, function(s)
+        U.paintCircle(s, r, r, r, color)
+    end)
+end
+
+function BoardView:checkerSprite(player)
+    local r = self.L.checker_r
+    return self:sprite((player == WHITE) and "cw" or "cb", r * 2 + 1, r * 2 + 1, function(s)
+        self:drawChecker(s, r, r, player, r)
+    end)
 end
 
 --------------------------------------------------------------------------
 -- checkers and dice
 --------------------------------------------------------------------------
 
+-- Draws the checker itself; paintTo stamps the cached sprite of this instead.
 function BoardView:drawChecker(bb, cx, cy, player, r)
     r = r or self.L.checker_r
     if player == WHITE then
         -- white: light disc inside a heavy dark ring
-        bb:paintCircle(cx, cy, r, BLACK_C, r)
-        bb:paintCircle(cx, cy, r - math.max(2, math.floor(r * 0.22)), WHITE_C)
+        U.paintCircle(bb, cx, cy, r, BLACK_C, r)
+        U.paintCircle(bb, cx, cy, r - math.max(2, math.floor(r * 0.22)), WHITE_C)
     else
         -- black: solid disc with a light inner ring so it reads as a checker
-        bb:paintCircle(cx, cy, r, BLACK_C)
-        bb:paintCircle(cx, cy, math.max(2, math.floor(r * 0.45)), WHITE_C, 2)
+        U.paintCircle(bb, cx, cy, r, BLACK_C)
+        U.paintCircle(bb, cx, cy, math.max(2, math.floor(r * 0.45)), WHITE_C, 2)
     end
 end
 
@@ -374,7 +534,19 @@ local PIPS = {
     [6] = { {0.28, 0.25}, {0.72, 0.25}, {0.28, 0.5}, {0.72, 0.5}, {0.28, 0.75}, {0.72, 0.75} },
 }
 
+-- Stamp a die with its top-left corner at (x, y), from a cached sprite. The
+-- sprite is one pixel larger than the die because the strike-through of a spent
+-- die runs one pixel past its corner.
 function BoardView:drawDie(bb, x, y, size, value, spent)
+    -- a spent die shows no pips, so one sprite serves every value
+    local key = spent and ("d%d:s"):format(size) or ("d%d:%d"):format(size, value)
+    local s = self:sprite(key, size + 1, size + 1, function(sb)
+        self:renderDie(sb, 0, 0, size, value, spent)
+    end)
+    bb:alphablitFrom(s, x, y)
+end
+
+function BoardView:renderDie(bb, x, y, size, value, spent)
     bb:paintRoundedRect(x, y, size, size, WHITE_C, math.floor(size * 0.15))
     bb:paintBorder(x, y, size, size, spent and 1 or 3, BLACK_C, math.floor(size * 0.15))
     if spent then
@@ -386,7 +558,7 @@ function BoardView:drawDie(bb, x, y, size, value, spent)
     end
     local pr = math.max(2, math.floor(size * 0.09))
     for _, pip in ipairs(PIPS[value] or PIPS[1]) do
-        bb:paintCircle(x + math.floor(size * pip[1]), y + math.floor(size * pip[2]), pr, BLACK_C)
+        U.paintCircle(bb, x + math.floor(size * pip[1]), y + math.floor(size * pip[2]), pr, BLACK_C)
     end
 end
 
@@ -422,26 +594,30 @@ function BoardView:paintTo(bb, x, y)
 
     self.dimen.x, self.dimen.y = x, y
 
+    self:matchTarget(bb)
     bb:fill(WHITE_C)
-    if not self.board_bb then self:buildBoardBuffer() end
-    bb:blitFrom(self.board_bb, L.board_x, L.board_y, 0, 0, L.board_w, L.board_h)
+    if not self.board_bb then self:buildBoardBuffer(bb) end
+    self:blitBoard(bb)
 
     -- checkers
+    local cr = L.checker_r
+    local white_s, black_s = self:checkerSprite(WHITE), self:checkerSprite(BLACK)
     for p = 1, 24 do
         local v = g.state.points[p]
         if v ~= 0 then
             local player = v > 0 and WHITE or BLACK
             local n = v > 0 and v or -v
+            local s = (player == WHITE) and white_s or black_s
             for i = 1, math.min(n, 5) do
                 local cx, cy = self:checkerCentre(p, i)
-                self:drawChecker(bb, cx, cy, player)
+                self:stamp(bb, s, cx, cy, cr)
             end
             if n > 5 then
                 local cx, cy = self:checkerCentre(p, 5)
                 local label = tostring(n)
                 local w = self:textWidth(L.face_small, label, true)
-                bb:paintCircle(cx, cy, L.checker_r - 2,
-                               player == WHITE and WHITE_C or BLACK_C)
+                self:stamp(bb, self:discSprite(cr - 2, player == WHITE and WHITE_C or BLACK_C),
+                           cx, cy, cr - 2)
                 RenderText:renderUtf8Text(bb, cx - math.floor(w / 2),
                     cy + math.floor(L.face_small.size * 0.35), L.face_small, label,
                     false, true, player == WHITE and BLACK_C or WHITE_C)
@@ -460,7 +636,7 @@ function BoardView:paintTo(bb, x, y)
                 local cy = bottom
                     and (r.y + r.h - L.checker_r - (i - 1) * L.checker_r * 2)
                     or (r.y + L.checker_r + (i - 1) * L.checker_r * 2)
-                self:drawChecker(bb, cx, cy, side)
+                self:stamp(bb, (side == WHITE) and white_s or black_s, cx, cy, cr)
             end
             if n > 4 then
                 local cy = bottom and (r.y + r.h - L.checker_r * 8) or (r.y + L.checker_r * 8)
@@ -517,7 +693,8 @@ function BoardView:paintTo(bb, x, y)
             local _, cy = self:checkerCentre(d, n + 1)
             my = cy
         end
-        bb:paintCircle(mx, my, math.max(4, math.floor(L.checker_r * 0.45)), BLACK_C)
+        local mr = math.max(4, math.floor(L.checker_r * 0.45))
+        self:stamp(bb, self:discSprite(mr, BLACK_C), mx, my, mr)
     end
 
     -- dice
@@ -532,8 +709,7 @@ end
 -- result straight away.
 function BoardView:paintDice(bb)
     local L, g = self.L, self.game
-    local size = math.min(math.floor(L.band_h * 0.7), math.floor(L.pt_w * 1.1))
-    if size < 12 then size = 12 end
+    local size = L.die_size          -- computeLayout, sized with the dice area
     local cx = L.spine_x
     local y = L.band_y + math.floor((L.band_h - size) / 2)
 
@@ -893,6 +1069,7 @@ function BoardView:init()
     self.dimen = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
     self.game = G.new()
     self.shown_dice = {}
+    self.sprites = {}           -- per-layout checker/dice/marker images, see sprite()
     self.closing = false
     self.last_message = nil
     self.orig_rotation = Screen.getRotationMode and Screen:getRotationMode() or nil
@@ -967,25 +1144,28 @@ function BoardView:init()
     self._cube_response = function() self:aiCubeResponse() end
 end
 
--- Rebuild for a new screen size, keeping the game in progress. self.dimen is
--- mutated rather than replaced because the tap GestureRange holds it.
 -- Flip the board between portrait and landscape from a button, rather than by
 -- physically rotating the device. This goes straight through KOReader's screen
 -- rotation and re-lays-out only this widget; the file manager underneath is left
--- alone and the original orientation is restored on close. The point is to skip
--- the accelerometer / auto-rotate path, which is what bogs the panel down when a
--- device is flipped back and forth.
+-- alone and the original orientation is restored on close.
+--
+-- Each way round it goes back to the orientation the game was opened in when
+-- that is the one being asked for, so a game started in landscape (either way
+-- up) returns to that same landscape rather than the other one, upside down.
 function BoardView:toggleOrientation()
     if not (Screen.setRotationMode and Screen.getRotationMode) then return end
     local cur = Screen:getRotationMode()
+    local orig = self.orig_rotation
     local target
     if cur % 2 == 1 then
-        -- currently landscape -> upright portrait
-        target = Screen.DEVICE_ROTATED_UPRIGHT or 0
+        -- currently landscape -> portrait: upright, unless the game was opened
+        -- in (upside-down) portrait
+        target = (orig and orig % 2 == 0) and orig or (Screen.DEVICE_ROTATED_UPRIGHT or 0)
     else
-        -- currently portrait -> counter-clockwise landscape, so the device's
-        -- bottom bezel (the logo) ends up on the right
-        target = Screen.DEVICE_ROTATED_COUNTER_CLOCKWISE or 3
+        -- currently portrait -> landscape: the one the game was opened in, or
+        -- else counter-clockwise, so the device's bottom bezel (the logo) ends
+        -- up on the right
+        target = (orig and orig % 2 == 1) and orig or (Screen.DEVICE_ROTATED_COUNTER_CLOCKWISE or 3)
     end
     Screen:setRotationMode(target)
     self:relayout()
@@ -994,10 +1174,12 @@ function BoardView:toggleOrientation()
     UIManager:setDirty(self, "full")
 end
 
+-- Rebuild for a new screen size, keeping the game in progress. self.dimen is
+-- mutated rather than replaced because the tap GestureRange holds it.
 function BoardView:relayout()
     self.dimen.w, self.dimen.h = Screen:getWidth(), Screen:getHeight()
     self:computeLayout()
-    self:free()     -- paintTo rebuilds the board image at the new size
+    self:free()     -- paintTo rebuilds the board image and sprites at the new size
 end
 
 function BoardView:onSetDimensions()
@@ -1011,13 +1193,14 @@ function BoardView:onShow()
     return true
 end
 
--- Release the one sizeable resource this widget owns. Safe to call more than
--- once, and called from onCloseWidget below.
+-- Release the buffers this widget owns: the board image and the sprites. Safe
+-- to call more than once, and called from onCloseWidget below.
 function BoardView:free()
     if self.board_bb then
         self.board_bb:free()
         self.board_bb = nil
     end
+    self:freeSprites()
 end
 
 function BoardView:onCloseWidget()
@@ -1062,9 +1245,9 @@ end
 
 -- Abandon the current game and hand control back to the opponent picker.
 -- Closing the board first runs onCloseWidget, which unschedules the computer's
--- pending moves, frees the board image, restores the screen orientation and
--- drops all game state -- so nothing from the abandoned game keeps running or
--- holds memory once we reopen the menu.
+-- pending moves, frees the board image and sprites, restores the screen
+-- orientation and drops all game state -- so nothing from the abandoned game
+-- keeps running or holds memory once we reopen the menu.
 function BoardView:goToMenu()
     local on_menu = self.on_menu
     self._abandon = true    -- abandoning: onCloseWidget must not save this game
