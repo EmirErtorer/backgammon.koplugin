@@ -186,6 +186,7 @@ function BoardView:computeLayout()
     local rot = math.min(math.floor(L.top_h * 0.6), math.floor(math.min(W, H) * 0.09))
     if rot < 24 then rot = 24 end
     L.rotate_btn = rect(pad * 2, math.floor((L.top_h - rot) / 2), rot, rot)
+    L.rot_r = math.max(4, math.floor(rot * 0.3))
 
     -- "Menu" button, top-right of the header (mirrors the rotate toggle on the
     -- left; the scoreboard is centred, so this corner is free). It abandons the
@@ -198,6 +199,10 @@ function BoardView:computeLayout()
     local btn_h = L.bot_h - text_h - pad * 2
     if btn_h < text_h + pad then btn_h = text_h + pad end
     local btn_y = H - btn_h - pad
+    -- Corner radius for the chrome buttons, scaled to their height so they read
+    -- as rounded squares at any screen size. The board frame, bar and trays stay
+    -- square; only the buttons are rounded.
+    L.btn_r = math.max(6, math.floor(btn_h * 0.32))
     -- New game and Close sit in the bottom corners; the Roll button lives on the
     -- board spine (computed below) so it is within reach of both players.
     L.new_btn = rect(pad, btn_y, side_w, btn_h)
@@ -227,6 +232,7 @@ function BoardView:computeLayout()
         local rw = math.min(content + padx * 2, L.inner_w - 4)
         L.roll_btn = rect(L.spine_x - math.floor(rw / 2),
                           L.band_y + math.floor((L.band_h - rh) / 2), rw, rh)
+        L.roll_r = math.max(5, math.floor(rh * 0.34))
     end
 
     -- Orientation. The base layout above is white-at-bottom, bearing off bottom
@@ -598,8 +604,8 @@ function BoardView:paintChrome(bb)
     if self:showRollButton() then
         local label = self:rollButtonLabel()
         local rb = L.roll_btn
-        bb:paintRoundedRect(rb.x, rb.y, rb.w, rb.h, WHITE_C, 6)
-        bb:paintBorder(rb.x, rb.y, rb.w, rb.h, 3, BLACK_C, 6)
+        bb:paintRoundedRect(rb.x, rb.y, rb.w, rb.h, WHITE_C, L.roll_r)
+        bb:paintBorder(rb.x, rb.y, rb.w, rb.h, 3, BLACK_C, L.roll_r)
         if g.phase ~= "over" then
             -- a small die next to the word, whatever language the label is in
             local s = math.floor(rb.h * 0.55)
@@ -615,14 +621,14 @@ function BoardView:paintChrome(bb)
         end
     end
 
-    bb:paintBorder(L.close_btn.x, L.close_btn.y, L.close_btn.w, L.close_btn.h, 2, BLACK_C, 6)
+    bb:paintBorder(L.close_btn.x, L.close_btn.y, L.close_btn.w, L.close_btn.h, 2, BLACK_C, L.btn_r)
     self:centreText(bb, L.close_btn, L.face_small, T("close"))
-    bb:paintBorder(L.new_btn.x, L.new_btn.y, L.new_btn.w, L.new_btn.h, 2, BLACK_C, 6)
+    bb:paintBorder(L.new_btn.x, L.new_btn.y, L.new_btn.w, L.new_btn.h, 2, BLACK_C, L.btn_r)
     self:centreText(bb, L.new_btn, L.face_small, T("new_game"))
 
     -- Review button, offered in the bottom centre once a game is over
     if g.phase == "over" and g.history and #g.history > 0 and L.review_btn then
-        bb:paintBorder(L.review_btn.x, L.review_btn.y, L.review_btn.w, L.review_btn.h, 2, BLACK_C, 6)
+        bb:paintBorder(L.review_btn.x, L.review_btn.y, L.review_btn.w, L.review_btn.h, 2, BLACK_C, L.btn_r)
         self:centreText(bb, L.review_btn, L.face_small, T("review"))
     end
 
@@ -630,7 +636,7 @@ function BoardView:paintChrome(bb)
 
     -- return-to-menu button, only when the caller gave us somewhere to go back to
     if self.on_menu and L.menu_btn then
-        bb:paintBorder(L.menu_btn.x, L.menu_btn.y, L.menu_btn.w, L.menu_btn.h, 2, BLACK_C, 6)
+        bb:paintBorder(L.menu_btn.x, L.menu_btn.y, L.menu_btn.w, L.menu_btn.h, 2, BLACK_C, L.btn_r)
         self:centreText(bb, L.menu_btn, L.face_small, T("menu"))
     end
 end
@@ -638,8 +644,9 @@ end
 -- Two overlapping rectangles, one portrait and one landscape, which reads as an
 -- orientation toggle without needing a font glyph.
 function BoardView:drawRotateIcon(bb, r)
-    bb:paintRoundedRect(r.x, r.y, r.w, r.h, WHITE_C, 4)
-    bb:paintBorder(r.x, r.y, r.w, r.h, 2, BLACK_C, 4)
+    local rad = self.L.rot_r or 4
+    bb:paintRoundedRect(r.x, r.y, r.w, r.h, WHITE_C, rad)
+    bb:paintBorder(r.x, r.y, r.w, r.h, 2, BLACK_C, rad)
     local cx = r.x + math.floor(r.w / 2)
     local cy = r.y + math.floor(r.h / 2)
     local a = math.floor(r.w * 0.30)   -- short side
@@ -878,6 +885,7 @@ function BoardView:openReview()
     local ReviewView = require("bg/reviewview")
     UIManager:show(ReviewView:new{
         history = self.game.history,
+        ai_side = self.ai_side,     -- when set, review just the human's play
         on_close = function() UIManager:setDirty(self, "flashui") end,
     })
 end

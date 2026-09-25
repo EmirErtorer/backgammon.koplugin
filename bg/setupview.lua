@@ -163,7 +163,10 @@ function SetupView:paintTo(bb, x, y)
     local start_h = math.floor(unit * 3)
     local footer_top = H - start_h - math.floor(unit * 1.6)
 
-    -- Difficulty (only when playing the computer)
+    -- Difficulty (only when playing the computer). The list is an accordion:
+    -- the chosen level shows its one-line description, the rest show just their
+    -- name. That keeps every row a comfortable tap target and stops five stacked
+    -- two-line rows from crowding into the space above the Start button.
     if self.opponent == "ai" then
         yy = yy + math.floor(unit * 0.4)
         self:drawText(bb, self.col_x, yy, self.face_small, T("difficulty"), true, BLACK_C)
@@ -171,16 +174,27 @@ function SetupView:paintTo(bb, x, y)
         self.hit.levels = {}
         local nlv = #AI.levels
         local rgap = math.floor(self.gap * 0.5)
-        -- shrink rows if needed so all levels fit above the Start button
         local avail = footer_top - yy - math.floor(unit * 0.4)
-        local dh = math.floor((avail - rgap * (nlv - 1)) / nlv)
-        if dh > self.row_h then dh = self.row_h end
+        -- Preferred heights: the open (selected) row is tall enough for two
+        -- lines, the others need only one. Shrink both together, keeping their
+        -- ratio, if the screen is too short to fit them -- so the list never
+        -- overruns the Start button no matter how many levels exist.
+        local sel_h = math.floor(unit * 2.3)
+        local one_h = math.floor(unit * 1.5)
+        local need = sel_h + one_h * (nlv - 1) + rgap * (nlv - 1)
+        if need > avail then
+            local scale = avail / need
+            sel_h = math.floor(sel_h * scale)
+            one_h = math.floor(one_h * scale)
+        end
         for _, lv in ipairs(AI.levels) do
-            local r = rect(self.col_x, yy, self.col_w, dh)
+            local selected = self.level == lv.id
+            local rh = selected and sel_h or one_h
+            local r = rect(self.col_x, yy, self.col_w, rh)
             self:drawRow(bb, r, lv.id .. ".  " .. T("lvl" .. lv.id .. "_name"),
-                         T("lvl" .. lv.id .. "_desc"), self.level == lv.id)
+                         selected and T("lvl" .. lv.id .. "_desc") or nil, selected)
             self.hit.levels[lv.id] = r
-            yy = yy + dh + rgap
+            yy = yy + rh + rgap
         end
     end
 
