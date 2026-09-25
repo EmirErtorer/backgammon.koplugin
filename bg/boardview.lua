@@ -1447,16 +1447,20 @@ function BoardView:playMove(to)
     -- Everything that changed on the board (the checker's old and new squares,
     -- the cleared highlights, the consumed die, a hit on the bar) sits inside
     -- one bounding box, so a move is a single refresh rather than several
-    -- sequential e ink updates. The bottom-centre slot is included because the
-    -- Undo button appears as soon as a checker has been played this turn.
-    self:refreshRects("ui", region, hit_r, L.dice_area, L.review_btn)
+    -- sequential e ink updates. The box is kept tight to the move -- the
+    -- bottom-centre Undo slot is refreshed on its own below, so it never drags
+    -- the box down across the whole lower half of the screen.
+    self:refreshRects("ui", region, hit_r, L.dice_area)
 
     if res == "turn_over" then
         g:passTurn()
         self:refreshBottom()
         self:beginTurn()
-    elseif self.last_message ~= g.message then
-        self:refreshBottom()
+    else
+        -- the Undo button appears the moment the first checker of the turn is
+        -- played; refresh only its small slot so the move stays a tight update
+        if g.turn_n == 1 then self:refreshEach("ui", L.review_btn) end
+        if self.last_message ~= g.message then self:refreshBottom() end
     end
 end
 
