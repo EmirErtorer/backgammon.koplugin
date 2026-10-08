@@ -1,155 +1,107 @@
-# Backgammon for KOReader
+<p><picture><source media="(prefers-color-scheme: dark)" srcset="assets/backgammon-title-dark.svg"><img src="assets/backgammon-title.svg" alt="Backgammon"></picture><br>
+<img src="assets/readme-divider.svg" width="100%" alt=""></p>
 
-A backgammon (tavla) board for [KOReader](https://github.com/koreader/koreader).
-Play another person on the same device, or take on the computer at one of five
-difficulty levels — from a loose beginner to a neural-net master.
+[![GitHub Release](https://img.shields.io/github/v/release/EmirErtorer/backgammon.koplugin?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBkPSJNMyAzaDguNUwyMSAxMi41IDEyLjUgMjEgMyAxMS41ek03LjUgNS41YTIgMiAwIDEgMCAwIDQgMiAyIDAgMCAwIDAtNHoiLz48L3N2Zz4%3D&label=Latest%20Release&labelColor=rgb(91%2C%2052%2C%2032)&color=rgb(239%2C233%2C223))](https://github.com/EmirErtorer/backgammon.koplugin/releases/latest)
+[![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/EmirErtorer/backgammon.koplugin/total?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiI%2BPHBhdGggZD0iTTExIDNoMnY5LjE3bDMuNTktMy41OEwxOCAxMGwtNiA2LTYtNiAxLjQxLTEuNDFMMTEgMTIuMTd6TTQgMTVoMnYzaDEydi0zaDJ2NUg0eiIvPjwvc3ZnPg%3D%3D&label=Total%20Downloads&labelColor=rgb(91%2C%2052%2C%2032)&color=rgb(239%2C233%2C223))](https://github.com/EmirErtorer/backgammon.koplugin/releases)
 
-Built for e-ink: flat greys instead of textures, checkers told apart by shape as
-well as shade, and small screen refreshes so play stays responsive.
+A **backgammon** (tavla) board for KOReader. Play a friend on the same device, or take on the **computer** at five levels, the top two running **GNU Backgammon's neural network**. Tap a checker to see where it can go, tap a point to move it. When the game is over, the review shows where you lost ground.
 
-- Two players on one device, or a computer opponent with five difficulty levels
-- Full standard rules: hitting, the bar, bearing off, forced moves, doubles
-- Doubling cube (optional), with the computer offering and answering doubles
-- Take back a checker before your turn ends; abandoning a game asks first
-- Games in progress are saved on exit and offered again as **Resume game**
-- Tap to select a checker, tap a highlighted point to move — no dragging
-- Session scoreboard with 1 / 2 / 3 point scoring (mars and backgammon)
-- Portrait and landscape, switchable from a button in-game
-- Pure Lua, no external dependencies
+## Screenshots
 
-<img width="1448" height="1072" alt="backgammon_landscape" src="https://github.com/user-attachments/assets/ff82c57c-c1fc-49a2-a6fc-17443ca15987" />
-<img width="1072" height="1448" alt="backgammon_portrait" src="https://github.com/user-attachments/assets/89d08650-7cf1-47af-a394-4e38bc3aa3ac" />
-
+<table>
+  <tr>
+    <td width="33%" valign="top"><a href="assets/screenshots/board.png"><img src="assets/screenshots/board.png" alt="The board"></a><br><sub>Tap a checker and the points it can reach light up. Undo takes a move back.</sub></td>
+    <td width="33%" valign="top"><a href="assets/screenshots/setup.png"><img src="assets/screenshots/setup.png" alt="Choosing a game"></a><br><sub>Two players on one device, or the computer at five levels.</sub></td>
+    <td width="33%" valign="top"><a href="assets/screenshots/review.png"><img src="assets/screenshots/review.png" alt="Game review"></a><br><sub>After the game: your costliest moves and what would have been better.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2" width="66%" valign="top"><a href="assets/screenshots/landscape.png"><img src="assets/screenshots/landscape.png" alt="Landscape with a double offered"></a><br><sub>Landscape at the tap of a button. With the doubling cube on, the computer doubles you when it likes its chances.</sub></td>
+    <td width="33%" valign="top"><a href="assets/screenshots/statistics.png"><img src="assets/screenshots/statistics.png" alt="Statistics"></a><br><sub>Your record against every level.</sub></td>
+  </tr>
+</table>
 
 
-## Requirements
+## Features
 
-KOReader on any supported device (Kobo, Kindle, PocketBook, Android, or the
-desktop build). It uses only long-standing parts of KOReader, so any reasonably
-recent version works.
+### Play
+
+| | |
+|---|---|
+| **The computer** | Five levels, from a beginner who leaves easy shots to a master that looks a full roll ahead. |
+| **Two players** | Share one device. The board can turn round each turn so whoever is on roll reads it upright. |
+| **Tap to move** | Tap a checker and every point it can legally reach lights up. Tap one to move there. No dragging. |
+| **Take back** | Undo steps back through the current turn one checker at a time and hands each die back. |
+| **Doubling cube** | Optional. Either side can offer a double and the other takes or drops it. The computer does both on its own. |
+| **Resume** | Close mid game and it is saved. Next time it is waiting under **Resume game**. |
+
+### The computer
+
+| Level | How it plays |
+|---|---|
+| **1 · Beginner** | Plays mostly by the race and leaves easy shots. A gentle start for learning. |
+| **2 · Casual** | Plays safe and punishes loose blots, one move deep. |
+| **3 · Skilled** | Looks a full roll ahead and plays the percentages. |
+| **4 · Expert** | GNU Backgammon's neural network judges every position. Beats Skilled about four games in five. |
+| **5 · Master** | The same network, looking a full roll ahead. The strongest, and the slowest: a couple of seconds a move on e ink. |
+
+Levels 1 to 3 are hand written. Levels 4 and 5 run GNU Backgammon's contact, race and crashed networks in pure Lua, checked against the original C code across thousands of positions. The computer pauses between its moves so you can follow what it played.
+
+### After the game
+
+| | |
+|---|---|
+| **Review** | Every move you made is compared with the neural network's choice. The costliest ones are listed with the better play and a tip. |
+| **Statistics** | Games played, your win streak and your record against each level. |
+| **Scoreboard** | The session score across the top: 1 point for a win, 2 for a mars, 3 for a backgammon, times the cube. |
+
+### Board and screen
+
+| | |
+|---|---|
+| **Made for e ink** | Flat greys instead of textures, checkers told apart by shape as well as shade and small screen refreshes so play stays quick. |
+| **Portrait or landscape** | A button in the header turns the board without turning the device. Both are equally fast, and KOReader goes back to its own orientation when you close. |
+| **Your layout** | Play white or black at the bottom and bear off on the left or the right. |
+| **Languages** | English and Turkish. It follows KOReader's language or you pick one. |
+
+<details>
+<summary><b>Rules and scoring</b></summary>
+
+The standard starting position: two checkers on the 24 point, five on the 13, three on the 8 and five on the 6, counted from each player's own side.
+
+* The first roll only decides who starts. Each side throws one die and the higher one goes first.
+* A point with two or more enemy checkers is blocked. Landing on a single enemy checker (a blot) sends it to the bar.
+* Doubles are played as four moves.
+* Both dice must be played when there is a legal way to do so. If only one can be played, it must be the higher one when that is legal. So a move that looks fine on its own can be ruled out because it strands the other die. The highlighted points are always the legal ones.
+* A checker on the bar must come back in before anything else moves. If it can't enter with either die, the turn passes on its own.
+* Bearing off needs all fifteen checkers in the home board. A higher roll than your furthest checker bears that one off.
+
+**Scoring:** 1 point for a normal win, 2 for a mars (the loser has borne off nothing), 3 for a backgammon (borne off nothing and still has a checker in the winner's home board). Wins are multiplied by the cube. A dropped double pays the stake before it.
+
+</details>
+
 
 ## Installation
 
-1. Download or clone this repository.
-2. Copy the `backgammon.koplugin` folder into KOReader's `plugins` folder.
-   - Kobo: `.adds/koreader/plugins/`
-   - Kindle: `koreader/plugins/`
-   - Android: `koreader/plugins/` inside the app's storage
-   - Desktop: the `plugins` folder next to the KOReader binary
-3. Restart KOReader.
+<a href="https://github.com/EmirErtorer/backgammon.koplugin/releases/latest"><img src="assets/readme-download.svg" alt="Download the latest release"></a>
 
-It then appears in the file browser under the **Tools** menu as **Backgammon**.
+Unzip the download and copy the `backgammon.koplugin` folder inside it into KOReader's `plugins` directory:
 
-## How to play
+- Kindle: `koreader/plugins/backgammon.koplugin/`
+- Kobo: `.adds/koreader/plugins/backgammon.koplugin/`
+- Android: `koreader/plugins/backgammon.koplugin/` in app storage
+- Desktop: the `plugins` folder next to the KOReader binary
 
-**Choosing an opponent.** Opening Backgammon shows a setup screen: pick **Two
-players** or **Play the computer** (and a difficulty), then **Start game**. You
-can return here any time with the **Menu** button in the top-right of the board.
+Then restart KOReader. Open it from the top menu → **Tools** tab → **Backgammon**.
 
-**Starting.** Press **Roll**. The first roll is not a turn: each side gets one
-die and the higher one starts, rerolling on a tie. The message line states the
-result, for example *"White 5, Black 3. White starts, roll again"*. The
-starting player then presses Roll for their first turn.
 
-**Moving.** Press Roll to throw the dice, then tap one of your checkers. Every
-point it can legally reach lights up with a heavy border and a marker. Tap one
-of those to move the checker there; the die that move used is removed from the
-dice on the bar. Tap the same checker again, or an empty area, to deselect.
+## Notes
 
-**Turn end.** When all the dice have been played the turn passes automatically.
-If a throw has no legal move at all, a note at the top says so and the turn
-passes on its own after a moment.
+- Works on any device KOReader runs on (Kindle, Kobo, PocketBook, Android or desktop) with any reasonably recent version. Pure Lua with no extra dependencies.
+- The doubling cube is off by default. Turn it on under **Board & colours** on the start screen.
+- Leaving a game with **Menu** or starting a **New game** mid play asks first.
+- There is no match play yet: games are not played to a set number of points.
 
-**Take back.** After you have moved a checker but before the turn passes, an
-**Undo** button appears in the bottom centre. It steps back through the moves of
-the current turn one at a time, handing each die back.
-
-**Doubling.** The doubling cube is off by default; switch it on in Board &
-colours. A **Double** button then sits in the bottom centre before you roll.
-Offer a double and the other side takes or drops; a drop ends the game for the
-current stake, a take turns the cube and hands it to the taker. The computer
-offers and answers doubles on its own.
-
-**Scoreboard.** The score across the top counts points for the current session.
-Wins are multiplied by the cube. **New game** deals a fresh board and keeps the
-running score; **Close** saves the game in progress and exits. Abandoning a game
-with **Menu** or starting a **New game** mid-play asks for confirmation first.
-
-**Resuming.** A game left unfinished when you close is offered again as **Resume
-game** at the top of the setup screen the next time you open Backgammon.
-
-**Orientation.** The button in the top-left of the header flips the board
-between portrait and landscape without physically rotating the device.
-
-## Opponents
-
-Levels differ in both how far ahead they look and how well they judge a
-position:
-
-- **1 · Beginner** — plays mostly by the pip race and leaves easy shots. A gentle
-  start for learning the game.
-- **2 · Casual** — plays safely and punishes loose blots, but only one move deep.
-- **3 · Skilled** — looks a full roll ahead and plays the percentages. Clearly
-  beats Casual.
-- **4 · Expert** — uses GNU Backgammon's neural network for world-class
-  positional judgement. A big jump up from Skilled.
-- **5 · Master** — the same neural network, looking a full roll ahead. The
-  strongest, and the slowest to move (a couple of seconds on e-ink).
-
-Levels 1–3 are hand-written heuristics; levels 4–5 use the neural network from
-GNU Backgammon (see [NOTICE.md](NOTICE.md)). The computer pauses briefly between
-its moves so you can follow what it played.
-
-## Rules
-
-The starting position is the standard one: two checkers on the 24 point, five
-on the 13, three on the 8 and five on the 6, counted from each player's own
-side. Both players bear off on the right — white at the bottom right, black at
-the top right.
-
-- A point holding two or more enemy checkers is blocked. A point holding a
-  single enemy checker is a blot; landing on it sends that checker to the bar.
-- Doubles are played as four moves of the same number.
-- Both dice must be played whenever there is a legal way to do so. If only one
-  die can be played, it must be the higher one when that is legal.
-- A checker on the bar must re-enter before anything else moves. It enters into
-  the opponent's home board using one die, and the rest of the throw is then
-  played normally. If it cannot enter with either die, the turn passes.
-- Bearing off requires all fifteen checkers in the home board and none on the
-  bar. An exact roll bears a checker off its point; a roll higher than the
-  highest occupied point bears off from that point; a roll higher than a point
-  that still has checkers behind it must be played as an ordinary move instead.
-
-### Scoring
-
-- **1 point** for a normal win (the loser has borne off at least one checker).
-- **2 points** for a mars (the loser has borne off none).
-- **3 points** when the loser has borne off none and still has a checker inside
-  the winner's home board.
-
-### A note on legal moves
-
-Whether a move is legal can depend on the rest of the turn, not just one die.
-Because both dice must be played when possible, a move that looks fine on its
-own can be illegal if it would strand the other die. The highlighted moves are
-always the legal ones — occasionally fewer than expected.
-
-## Orientation and performance
-
-Portrait and landscape play equally fast. Use the button in the top-left of the
-header to switch between them without rotating the device, or open the game while
-KOReader is already in landscape; either way works. The button always brings you
-back to the landscape you opened the game in, and closing the game returns
-KOReader to the orientation it was in.
-
-Earlier versions were noticeably slower in landscape. That came from the way the
-board was drawn, not from the e-ink screen, and is fixed.
-
-## Limitations
-
-- No match play: games are not played to a set number of points.
 
 ## License
 
-Licensed under GPL-3.0-or-later (see [LICENSE](LICENSE)). The Expert and Master
-levels use the neural network from GNU Backgammon; see [NOTICE.md](NOTICE.md).
+GPL 3.0 or later (see [`LICENSE`](LICENSE)). The Expert and Master levels use the neural network weights and evaluation from GNU Backgammon, see [`NOTICE.md`](NOTICE.md).
