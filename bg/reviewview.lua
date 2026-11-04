@@ -2,7 +2,6 @@
 -- move and where you gave up the most winning chances -- with the reason where
 -- one can be stated, and a takeaway tip. Opened from the board when a game ends.
 
-local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
@@ -14,12 +13,10 @@ local UIManager = require("ui/uimanager")
 local R = require("bg/rules")
 local Review = require("bg/review")
 local T = require("bg/i18n")
+local Theme = require("bg/theme")
 local U = require("bg/uiutil")
 
 local Screen = Device.screen
-local BLACK_C = Blitbuffer.COLOR_BLACK
-local WHITE_C = Blitbuffer.COLOR_WHITE
-local GRAY = Blitbuffer.COLOR_GRAY_5
 
 local ReviewView = InputContainer:extend{ name = "backgammon_review", covers_fullscreen = true }
 
@@ -58,10 +55,10 @@ end
 
 function ReviewView:tw(face, s, b) return U.textW(face, s, b) end
 function ReviewView:draw(bb, x, base, face, s, b, color)
-    U.text(bb, x, base, face, s, b, color)
+    U.text(bb, x, base, face, s, b, color or self.P.ink)
 end
 function ReviewView:centre(bb, cx, base, face, s, b, color)
-    U.centered(bb, cx, base, face, s, b, color)
+    U.centered(bb, cx, base, face, s, b, color or self.P.ink)
 end
 
 local function label(self, side)
@@ -81,7 +78,9 @@ end
 function ReviewView:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     local W, H = Screen:getWidth(), Screen:getHeight()
-    bb:fill(WHITE_C)
+    local P = Theme.get(bb)
+    self.P = P
+    U.fill(bb, P.paper)
     self.hit = {}
     local unit = self.unit
     local cx = math.floor(W / 2)
@@ -115,7 +114,7 @@ function ReviewView:paintTo(bb, x, y)
                     yy = yy + math.floor(unit * 1.0)
                     if m.reason then
                         self:draw(bb, self.col_x + unit, yy, self.face_small,
-                                  "\u{2192} " .. T("reason_" .. m.reason), false, GRAY)
+                                  "\u{2192} " .. T("reason_" .. m.reason), false, P.muted)
                         yy = yy + math.floor(unit * 1.0)
                     end
                     yy = yy + math.floor(unit * 0.3)
@@ -129,7 +128,7 @@ function ReviewView:paintTo(bb, x, y)
             end
             local tip = tipFor(p)
             if tip and yy < bottom_limit then
-                self:draw(bb, self.col_x, yy, self.face_small, tip, false, GRAY)
+                self:draw(bb, self.col_x, yy, self.face_small, tip, false, P.muted)
                 yy = yy + math.floor(unit * 1.3)
             end
             yy = yy + math.floor(unit * 0.5)
@@ -138,9 +137,9 @@ function ReviewView:paintTo(bb, x, y)
 
     local done_h = math.floor(unit * 2.8)
     local done_r = rect(self.col_x, H - done_h - math.floor(unit * 1.3), self.col_w, done_h)
-    bb:paintRoundedRect(done_r.x, done_r.y, done_r.w, done_r.h, BLACK_C, math.floor(unit * 0.4))
+    U.fillRound(bb, done_r.x, done_r.y, done_r.w, done_r.h, P.primary, math.floor(unit * 0.4))
     self:centre(bb, cx, done_r.y + math.floor(done_r.h / 2) + math.floor(self.face.size * 0.4),
-                self.face, T("done"), false, WHITE_C)
+                self.face, T("done"), false, P.primary_text)
     self.hit.done = done_r
 end
 

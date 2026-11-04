@@ -1,12 +1,14 @@
 -- Persistent preferences and lifetime stats.
 --
 -- Preferences: which colour player 1 plays, which corner they bear off to,
--- whether the board flips to face the player on move (two-player), and the UI
--- language. Stats: cumulative counts keyed by name.
+-- whether the board flips to face the player on move (two-player), the colour
+-- theme and the UI language. Stats: cumulative counts keyed by name.
 --
 -- Persisted via KOReader's LuaSettings when available; falls back to in-memory
 -- defaults otherwise (e.g. headless tests), so callers never care if saving
 -- actually worked.
+
+local Palettes = require("bg/palettes")
 
 local Settings = {}
 
@@ -16,6 +18,7 @@ local DEFAULTS = {
     flip_turns = "off",     -- "on" | "off" (two-player: flip board each turn)
     cube = "off",           -- "on" | "off" (doubling cube)
     language = "auto",      -- "auto" | "en" | "tr"
+    theme = Palettes.ORDER[1],  -- colour theme, see bg/palettes.lua (colour screens only)
 }
 local ENUMS = {
     user_color = { white = true, black = true },
@@ -23,6 +26,7 @@ local ENUMS = {
     flip_turns = { on = true, off = true },
     cube = { on = true, off = true },
     language = { auto = true, en = true, tr = true },
+    theme = Palettes.themes,
 }
 
 local values, stats, store, saved

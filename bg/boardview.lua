@@ -31,9 +31,11 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local RenderText = require("ui/rendertext")
 local UIManager = require("ui/uimanager")
 
+local Dialog = require("bg/dialog")
 local G = require("bg/game")
 local R = require("bg/rules")
 local T = require("bg/i18n")
+local Theme = require("bg/theme")
 local U = require("bg/uiutil")
 
 -- Blitbuffer.new allocates its pixels outside the Lua heap (calloc). Current
@@ -46,12 +48,6 @@ local ok_ffi, ffi = pcall(require, "ffi")
 
 local Screen = Device.screen
 local WHITE, BLACK, BAR, OFF = G.WHITE, G.BLACK, G.BAR, G.OFF
-
-local BLACK_C = Blitbuffer.COLOR_BLACK
-local WHITE_C = Blitbuffer.COLOR_WHITE
-local DARK = Blitbuffer.COLOR_GRAY_5
-local LIGHT = Blitbuffer.COLOR_GRAY_B
-local MID = Blitbuffer.COLOR_GRAY
 
 -- Pacing for the computer's turn, in seconds. The moves are deliberately
 -- unhurried so a human can follow which checker moved; tune them here.
@@ -325,7 +321,7 @@ local function fillTriangle(bb, x, y, w, h, pointing_down, color)
         local frac = pointing_down and (1 - t) or t
         local half = math.floor((w / 2) * frac)
         if half > 0 then
-            bb:paintRect(x + math.floor(w / 2) - half, y + i, half * 2, 1, color)
+            U.fillRect(bb, x + math.floor(w / 2) - half, y + i, half * 2, 1, color)
         end
     end
 end
@@ -358,6 +354,7 @@ function BoardView:buildBoardBuffer(target)
         self.board_bb:free()
         self.board_bb = nil
     end
+    local P = Theme.get(target)
     local rot, inv = bbRotation(target), bbInverse(target)
     local pw, ph = L.board_w, L.board_h
     if rot % 2 == 1 then pw, ph = ph, pw end
@@ -373,9 +370,10 @@ function BoardView:buildBoardBuffer(target)
         bb:setInverse(inv)
     end
     self.board_rot, self.board_inv, self.board_type = rot, inv, target:getType()
+    self.board_ver = P.version
 
-    bb:fill(WHITE_C)
-    bb:paintBorder(0, 0, L.board_w, L.board_h, L.frame, BLACK_C)
+    U.fill(bb, P.board)
+    U.border(bb, 0, 0, L.board_w, L.board_h, L.frame, P.edge)
 
     local ox, oy = -L.board_x, -L.board_y   -- board rects are in screen space
 
@@ -383,21 +381,21 @@ function BoardView:buildBoardBuffer(target)
     for p = 1, 24 do
         local r = L.point[p]
         local row = self:pointRow(p)
-        local color = (p % 2 == 0) and DARK or LIGHT
+        local color = (p % 2 == 0) and P.pt_a or P.pt_b
         fillTriangle(bb, r.x + ox + 1, r.y + oy, r.w - 2, r.h,
                      row == "top", color)
     end
 
     -- the bar
-    bb:paintRect(L.bar_x + ox, L.inner_y + oy, L.bar_w, L.inner_h, MID)
-    bb:paintRect(L.bar_x + ox, L.inner_y + oy, 2, L.inner_h, BLACK_C)
-    bb:paintRect(L.bar_x + ox + L.bar_w - 2, L.inner_y + oy, 2, L.inner_h, BLACK_C)
+    U.fillRect(bb, L.bar_x + ox, L.inner_y + oy, L.bar_w, L.inner_h, P.bar)
+    U.fillRect(bb, L.bar_x + ox, L.inner_y + oy, 2, L.inner_h, P.edge)
+    U.fillRect(bb, L.bar_x + ox + L.bar_w - 2, L.inner_y + oy, 2, L.inner_h, P.edge)
 
     -- tray column
-    bb:paintRect(L.tray_x + ox, L.inner_y + oy, L.tray_w, L.inner_h, WHITE_C)
-    bb:paintRect(L.tray_x + ox, L.inner_y + oy, 2, L.inner_h, BLACK_C)
+    U.fillRect(bb, L.tray_x + ox, L.inner_y + oy, L.tray_w, L.inner_h, P.tray)
+    U.fillRect(bb, L.tray_x + ox, L.inner_y + oy, 2, L.inner_h, P.edge)
     for _, tr in ipairs({ L.tray_black, L.tray_white }) do
-        bb:paintBorder(tr.x + ox + 3, tr.y + oy + 2, tr.w - 6, tr.h - 4, 2, BLACK_C)
+        U.border(bb, tr.x + ox + 3, tr.y + oy + 2, tr.w - 6, tr.h - 4, 2, P.edge)
     end
 
     -- from here on the image is just rows in the panel's order
@@ -410,14 +408,18 @@ end
 -- order or inversion without a relayout, so check here on every paint.
 function BoardView:matchTarget(bb)
     local rot, inv = bbRotation(bb), bbInverse(bb)
+    local P = Theme.get(bb)
+    self.P = P
     if self.board_bb and (rot ~= self.board_rot or inv ~= self.board_inv
-                          or bb:getType() ~= self.board_type) then
+                          or bb:getType() ~= self.board_type
+                          or P.version ~= self.board_ver) then
         self.board_bb:free()
         self.board_bb = nil
     end
-    if inv ~= self.sprite_inv then
+    -- sprites hold the theme's colours, in the kind of buffer this screen takes
+    if inv ~= self.sprite_inv or P.version ~= self.sprite_ver or P.sprite ~= self.sprite_kind then
         self:freeSprites()
-        self.sprite_inv = inv
+        self.sprite_inv, self.sprite_ver, self.sprite_kind = inv, P.version, P.sprite
     end
 end
 
@@ -443,20 +445,32 @@ end
 -- sprites
 --------------------------------------------------------------------------
 
--- A small image with an alpha channel, drawn once by `draw` and cached under
--- `key` until the layout or night mode changes. paintTo stamps these with
--- alphablitFrom, which the C blitter does in any rotation; the circle drawing
--- that used to run for every checker on every repaint now runs once per sprite.
+-- A small image with an alpha channel, drawn once by `draw(buffer, ox, oy)` and
+-- cached under `key` until the layout, theme or night mode changes. paintTo
+-- stamps these with alphablitFrom, which the C blitter does in any rotation; the
+-- circle drawing that used to run for every checker on every repaint now runs
+-- once per sprite.
+--
+-- The sprite's type has to suit the screen (P.sprite, see bg/theme.lua): grey
+-- themes use BB8A as ever, colour ones an RGB32 image with alpha. For a screen
+-- the C blitter cannot stamp onto at all ("direct") there is no image: the
+-- returned stand-in just runs `draw` onto the board at the right spot.
 function BoardView:sprite(key, w, h, draw)
     local s = self.sprites[key]
     if s then return s end
+    if self.P.sprite == "direct" then
+        s = { draw = draw }
+        self.sprites[key] = s
+        return s
+    end
     -- Blitbuffer.new callocs, so every pixel starts fully transparent. (Don't
     -- :fill it -- that would make the whole square opaque.)
-    s = Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8A)
+    s = Blitbuffer.new(w, h, self.P.sprite == "rgb32" and Blitbuffer.TYPE_BBRGB32
+                              or Blitbuffer.TYPE_BB8A)
     if ok_ffi and type(s) == "cdata" then ffi.gc(s, s.free) end
     -- stored with the screen's inversion, so night mode still blits in C
     if s.setInverse then s:setInverse(self.sprite_inv or 0) end
-    draw(s)
+    draw(s, 0, 0)
     self.sprites[key] = s
     return s
 end
@@ -464,29 +478,54 @@ end
 function BoardView:freeSprites()
     if not self.sprites then return end
     for k, s in pairs(self.sprites) do
-        s:free()
+        if self.sprite_kind ~= "direct" then s:free() end
         self.sprites[k] = nil
+    end
+end
+
+-- Put a sprite with its top-left corner at (x, y).
+function BoardView:stampAt(bb, s, x, y)
+    if self.P.sprite == "direct" then
+        s.draw(bb, x, y)
+    else
+        bb:alphablitFrom(s, x, y)
     end
 end
 
 -- Stamp a checker or disc sprite (2r+1 square) with its centre at (cx, cy).
 function BoardView:stamp(bb, s, cx, cy, r)
-    bb:alphablitFrom(s, cx - r, cy - r)
+    self:stampAt(bb, s, cx - r, cy - r)
 end
 
--- A filled disc of radius r (the stack-count backing and the destination
--- marker), same pixels as bb:paintCircle(cx, cy, r, color).
-function BoardView:discSprite(r, color)
-    local key = ((color == WHITE_C) and "dw" or "db") .. r
-    return self:sprite(key, r * 2 + 1, r * 2 + 1, function(s)
-        U.paintCircle(s, r, r, r, color)
+-- A filled disc of radius r in a palette role (the destination marker), same
+-- pixels as bb:paintCircle(cx, cy, r, color).
+function BoardView:discSprite(r, role)
+    local color = self.P[role]
+    return self:sprite(role .. r, r * 2 + 1, r * 2 + 1, function(sb, ox, oy)
+        U.paintCircle(sb, ox + r, oy + r, r, color)
+    end)
+end
+
+-- The backing of a stack count: a disc in the checker's colours. On colour
+-- themes it gets the checker's outline too, so a pale disc stands out on a
+-- pale point.
+function BoardView:countSprite(r, player)
+    local P = self.P
+    local fill = (player == WHITE) and P.wfill or P.bfill
+    return self:sprite((player == WHITE and "nw" or "nb") .. r, r * 2 + 1, r * 2 + 1, function(sb, ox, oy)
+        if P.colour then
+            U.paintCircle(sb, ox + r, oy + r, r, (player == WHITE) and P.wring or P.bfill)
+            U.paintCircle(sb, ox + r, oy + r, r - 2, fill)
+        else
+            U.paintCircle(sb, ox + r, oy + r, r, fill)
+        end
     end)
 end
 
 function BoardView:checkerSprite(player)
     local r = self.L.checker_r
-    return self:sprite((player == WHITE) and "cw" or "cb", r * 2 + 1, r * 2 + 1, function(s)
-        self:drawChecker(s, r, r, player, r)
+    return self:sprite((player == WHITE) and "cw" or "cb", r * 2 + 1, r * 2 + 1, function(sb, ox, oy)
+        self:drawChecker(sb, ox + r, oy + r, player, r)
     end)
 end
 
@@ -497,14 +536,15 @@ end
 -- Draws the checker itself; paintTo stamps the cached sprite of this instead.
 function BoardView:drawChecker(bb, cx, cy, player, r)
     r = r or self.L.checker_r
+    local P = self.P
     if player == WHITE then
         -- white: light disc inside a heavy dark ring
-        U.paintCircle(bb, cx, cy, r, BLACK_C, r)
-        U.paintCircle(bb, cx, cy, r - math.max(2, math.floor(r * 0.22)), WHITE_C)
+        U.paintCircle(bb, cx, cy, r, P.wring, r)
+        U.paintCircle(bb, cx, cy, r - math.max(2, math.floor(r * 0.22)), P.wfill)
     else
         -- black: solid disc with a light inner ring so it reads as a checker
-        U.paintCircle(bb, cx, cy, r, BLACK_C)
-        U.paintCircle(bb, cx, cy, math.max(2, math.floor(r * 0.45)), WHITE_C, 2)
+        U.paintCircle(bb, cx, cy, r, P.bfill)
+        U.paintCircle(bb, cx, cy, math.max(2, math.floor(r * 0.45)), P.bring, 2)
     end
 end
 
@@ -540,40 +580,44 @@ local PIPS = {
 function BoardView:drawDie(bb, x, y, size, value, spent)
     -- a spent die shows no pips, so one sprite serves every value
     local key = spent and ("d%d:s"):format(size) or ("d%d:%d"):format(size, value)
-    local s = self:sprite(key, size + 1, size + 1, function(sb)
-        self:renderDie(sb, 0, 0, size, value, spent)
+    local s = self:sprite(key, size + 1, size + 1, function(sb, ox, oy)
+        self:renderDie(sb, ox, oy, size, value, spent)
     end)
-    bb:alphablitFrom(s, x, y)
+    self:stampAt(bb, s, x, y)
 end
 
 function BoardView:renderDie(bb, x, y, size, value, spent)
-    bb:paintRoundedRect(x, y, size, size, WHITE_C, math.floor(size * 0.15))
-    bb:paintBorder(x, y, size, size, spent and 1 or 3, BLACK_C, math.floor(size * 0.15))
+    local P = self.P
+    local rad = math.floor(size * 0.15)
+    U.fillRound(bb, x, y, size, size, P.die, rad)
+    U.border(bb, x, y, size, size, spent and 1 or 3, P.die_edge, rad)
     if spent then
         -- a struck through die reads as used even without colour
         for i = 0, size - 1 do
-            bb:paintRect(x + i, y + i, 2, 2, BLACK_C)
+            U.fillRect(bb, x + i, y + i, 2, 2, P.spent)
         end
         return
     end
     local pr = math.max(2, math.floor(size * 0.09))
     for _, pip in ipairs(PIPS[value] or PIPS[1]) do
-        U.paintCircle(bb, x + math.floor(size * pip[1]), y + math.floor(size * pip[2]), pr, BLACK_C)
+        -- the lone pip of a one is red, as on a traditional die
+        U.paintCircle(bb, x + math.floor(size * pip[1]), y + math.floor(size * pip[2]), pr,
+                      value == 1 and P.one or P.pip)
     end
 end
 
-function BoardView:text(bb, x, baseline, face, str, bold)
-    RenderText:renderUtf8Text(bb, x, baseline, face, str, false, bold or false, BLACK_C)
+function BoardView:text(bb, x, baseline, face, str, bold, color)
+    U.text(bb, x, baseline, face, str, bold, color or self.P.ink)
 end
 
 function BoardView:textWidth(face, str, bold)
     return RenderText:sizeUtf8Text(0, 10000, face, str, false, bold or false).x
 end
 
-function BoardView:centreText(bb, r, face, str, bold)
+function BoardView:centreText(bb, r, face, str, bold, color)
     local w = self:textWidth(face, str, bold)
     local baseline = r.y + math.floor(r.h / 2) + math.floor(face.size * 0.35)
-    self:text(bb, r.x + math.floor((r.w - w) / 2), baseline, face, str, bold)
+    self:text(bb, r.x + math.floor((r.w - w) / 2), baseline, face, str, bold, color)
 end
 
 --------------------------------------------------------------------------
@@ -595,7 +639,8 @@ function BoardView:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
 
     self:matchTarget(bb)
-    bb:fill(WHITE_C)
+    local P = self.P
+    U.fill(bb, P.paper)
     if not self.board_bb then self:buildBoardBuffer(bb) end
     self:blitBoard(bb)
 
@@ -616,11 +661,10 @@ function BoardView:paintTo(bb, x, y)
                 local cx, cy = self:checkerCentre(p, 5)
                 local label = tostring(n)
                 local w = self:textWidth(L.face_small, label, true)
-                self:stamp(bb, self:discSprite(cr - 2, player == WHITE and WHITE_C or BLACK_C),
-                           cx, cy, cr - 2)
-                RenderText:renderUtf8Text(bb, cx - math.floor(w / 2),
+                self:stamp(bb, self:countSprite(cr - 2, player), cx, cy, cr - 2)
+                self:text(bb, cx - math.floor(w / 2),
                     cy + math.floor(L.face_small.size * 0.35), L.face_small, label,
-                    false, true, player == WHITE and BLACK_C or WHITE_C)
+                    true, player == WHITE and P.wring or P.bring)
             end
         end
     end
@@ -656,10 +700,12 @@ function BoardView:paintTo(bb, x, y)
                 local yy = bottom
                     and (tr.y + tr.h - 4 - i * slot_h)
                     or (tr.y + 4 + (i - 1) * slot_h)
-                bb:paintRect(tr.x + 6, yy, tr.w - 12, slot_h - 1,
-                             side == WHITE and LIGHT or BLACK_C)
-                if side == WHITE then
-                    bb:paintBorder(tr.x + 6, yy, tr.w - 12, slot_h - 1, 1, BLACK_C)
+                U.fillRect(bb, tr.x + 6, yy, tr.w - 12, slot_h - 1,
+                           side == WHITE and P.off_w or P.off_b)
+                -- on grey only the light bars need an outline; the colour
+                -- themes outline both so a dark bar shows on a dark tray
+                if side == WHITE or P.colour then
+                    U.border(bb, tr.x + 6, yy, tr.w - 12, slot_h - 1, 1, P.edge)
                 end
             end
         end
@@ -673,14 +719,14 @@ function BoardView:paintTo(bb, x, y)
         local r = (g.selected == BAR)
             and ((g.player == WHITE) and L.bar_white or L.bar_black)
             or L.point[g.selected]
-        bb:paintBorder(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 3, BLACK_C)
+        U.border(bb, r.x + 1, r.y + 1, r.w - 2, r.h - 2, 3, P.select)
     end
     for i = 1, g.dests_n do
         local d = g.dests[i]
         local r = (d == OFF)
             and ((g.player == WHITE) and L.tray_white or L.tray_black)
             or L.point[d]
-        bb:paintBorder(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 3, BLACK_C)
+        U.border(bb, r.x + 1, r.y + 1, r.w - 2, r.h - 2, 3, P.dest)
         -- a filled marker as well, so the cue does not rely on the border alone
         -- sit the marker where the checker would land, which is the next
         -- free slot counting in from the board edge
@@ -694,7 +740,7 @@ function BoardView:paintTo(bb, x, y)
             my = cy
         end
         local mr = math.max(4, math.floor(L.checker_r * 0.45))
-        self:stamp(bb, self:discSprite(mr, BLACK_C), mx, my, mr)
+        self:stamp(bb, self:discSprite(mr, "dest"), mx, my, mr)
     end
 
     -- dice
@@ -753,13 +799,23 @@ function BoardView:paintCube(bb)
     end
     local x = cx - math.floor(size / 2)
     local radius = math.floor(size * 0.18)
-    bb:paintRoundedRect(x, y, size, size, WHITE_C, radius)
-    bb:paintBorder(x, y, size, size, math.max(2, math.floor(size * 0.08)), BLACK_C, radius)
-    self:centreText(bb, rect(x, y, size, size), L.face_small, tostring(val), true)
+    local P = self.P
+    U.fillRound(bb, x, y, size, size, P.cube, radius)
+    U.border(bb, x, y, size, size, math.max(2, math.floor(size * 0.08)), P.ink, radius)
+    self:centreText(bb, rect(x, y, size, size), L.face_small, tostring(val), true, P.cube_ink)
+end
+
+-- An outlined button: the theme's button face, ink outline, then the label.
+function BoardView:outlineButton(bb, r, label)
+    local P, L = self.P, self.L
+    U.fillRound(bb, r.x, r.y, r.w, r.h, P.btn, L.btn_r)
+    U.border(bb, r.x, r.y, r.w, r.h, 2, P.ink, L.btn_r)
+    self:centreText(bb, r, L.face_small, label)
 end
 
 function BoardView:paintChrome(bb)
     local L, g = self.L, self.game
+    local P = self.P
     local W = Screen:getWidth()
     local pad = math.floor(L.pt_w * 0.2)
 
@@ -813,8 +869,11 @@ function BoardView:paintChrome(bb)
     if self:showRollButton() then
         local label = self:rollButtonLabel()
         local rb = L.roll_btn
-        bb:paintRoundedRect(rb.x, rb.y, rb.w, rb.h, WHITE_C, L.roll_r)
-        bb:paintBorder(rb.x, rb.y, rb.w, rb.h, 3, BLACK_C, L.roll_r)
+        -- the main action: a filled button on a colour theme, the outline on grey
+        local filled = P.colour
+        U.fillRound(bb, rb.x, rb.y, rb.w, rb.h, filled and P.primary or P.btn, L.roll_r)
+        U.border(bb, rb.x, rb.y, rb.w, rb.h, 3, P.ink, L.roll_r)
+        local roll_ink = filled and P.primary_text or P.ink
         if g.phase ~= "over" then
             -- a small die next to the word, whatever language the label is in
             local s = math.floor(rb.h * 0.55)
@@ -824,37 +883,31 @@ function BoardView:paintChrome(bb)
             self:drawDie(bb, bx, rb.y + math.floor((rb.h - s) / 2), s, 5, false)
             self:text(bb, bx + s + 8,
                       rb.y + math.floor(rb.h / 2) + math.floor(L.face_small.size * 0.35),
-                      L.face_small, label, true)
+                      L.face_small, label, true, roll_ink)
         else
-            self:centreText(bb, rb, L.face_small, label, true)
+            self:centreText(bb, rb, L.face_small, label, true, roll_ink)
         end
     end
 
-    bb:paintBorder(L.close_btn.x, L.close_btn.y, L.close_btn.w, L.close_btn.h, 2, BLACK_C, L.btn_r)
-    self:centreText(bb, L.close_btn, L.face_small, T("close"))
-    bb:paintBorder(L.new_btn.x, L.new_btn.y, L.new_btn.w, L.new_btn.h, 2, BLACK_C, L.btn_r)
-    self:centreText(bb, L.new_btn, L.face_small, T("new_game"))
+    self:outlineButton(bb, L.close_btn, T("close"))
+    self:outlineButton(bb, L.new_btn, T("new_game"))
 
     -- Bottom centre: the Review button once a game is over, or an Undo button
     -- while the player still has a move of this turn to take back. The two never
     -- want the slot at the same time (over vs. move), so they share it.
     if g.phase == "over" and g.history and #g.history > 0 and L.review_btn then
-        bb:paintBorder(L.review_btn.x, L.review_btn.y, L.review_btn.w, L.review_btn.h, 2, BLACK_C, L.btn_r)
-        self:centreText(bb, L.review_btn, L.face_small, T("review"))
+        self:outlineButton(bb, L.review_btn, T("review"))
     elseif self:showUndoButton() and L.review_btn then
-        bb:paintBorder(L.review_btn.x, L.review_btn.y, L.review_btn.w, L.review_btn.h, 2, BLACK_C, L.btn_r)
-        self:centreText(bb, L.review_btn, L.face_small, T("undo"))
+        self:outlineButton(bb, L.review_btn, T("undo"))
     elseif self:showDoubleButton() and L.review_btn then
-        bb:paintBorder(L.review_btn.x, L.review_btn.y, L.review_btn.w, L.review_btn.h, 2, BLACK_C, L.btn_r)
-        self:centreText(bb, L.review_btn, L.face_small, T("double"))
+        self:outlineButton(bb, L.review_btn, T("double"))
     end
 
     self:drawRotateIcon(bb, L.rotate_btn)
 
     -- return-to-menu button, only when the caller gave us somewhere to go back to
     if self.on_menu and L.menu_btn then
-        bb:paintBorder(L.menu_btn.x, L.menu_btn.y, L.menu_btn.w, L.menu_btn.h, 2, BLACK_C, L.btn_r)
-        self:centreText(bb, L.menu_btn, L.face_small, T("menu"))
+        self:outlineButton(bb, L.menu_btn, T("menu"))
     end
 end
 
@@ -862,14 +915,15 @@ end
 -- orientation toggle without needing a font glyph.
 function BoardView:drawRotateIcon(bb, r)
     local rad = self.L.rot_r or 4
-    bb:paintRoundedRect(r.x, r.y, r.w, r.h, WHITE_C, rad)
-    bb:paintBorder(r.x, r.y, r.w, r.h, 2, BLACK_C, rad)
+    local P = self.P
+    U.fillRound(bb, r.x, r.y, r.w, r.h, P.btn, rad)
+    U.border(bb, r.x, r.y, r.w, r.h, 2, P.ink, rad)
     local cx = r.x + math.floor(r.w / 2)
     local cy = r.y + math.floor(r.h / 2)
     local a = math.floor(r.w * 0.30)   -- short side
     local b = math.floor(r.w * 0.50)   -- long side
-    bb:paintBorder(cx - math.floor(a / 2), cy - math.floor(b / 2), a, b, 2, BLACK_C, 2)
-    bb:paintBorder(cx - math.floor(b / 2), cy - math.floor(a / 2), b, a, 2, BLACK_C, 2)
+    U.border(bb, cx - math.floor(a / 2), cy - math.floor(b / 2), a, b, 2, P.ink, 2)
+    U.border(bb, cx - math.floor(b / 2), cy - math.floor(a / 2), b, a, 2, P.ink, 2)
 end
 
 function BoardView:clearDice()
@@ -942,14 +996,14 @@ function BoardView:onDouble()
     end
 end
 
--- Ask a person to take or drop the pending double (KOReader's stock ConfirmBox,
--- required lazily so headless tests never load it).
+-- Ask a person to take or drop the pending double, in the theme's own dialog.
+-- It cannot be dismissed: only Take or Drop decides the double.
 function BoardView:promptTake(doubler)
     local g = self.game
     if not g.pending_double then return end
-    local ConfirmBox = require("ui/widget/confirmbox")
-    UIManager:show(ConfirmBox:new{
+    UIManager:show(Dialog:new{
         text = T("cube_take_q", self:sideName(doubler), g.pending_double.value),
+        dismissable = false,
         ok_text = T("take"),
         cancel_text = T("drop"),
         ok_callback = function() self:resolveTake() end,
@@ -1277,16 +1331,14 @@ function BoardView:gameInProgress()
     return g.score[WHITE] > 0 or g.score[BLACK] > 0
 end
 
--- Ask before an action that would discard the current game. Uses KOReader's
--- stock ConfirmBox (required lazily so headless tests never load it), and skips
--- the prompt entirely when there is nothing worth keeping.
+-- Ask before an action that would discard the current game, and skip the prompt
+-- entirely when there is nothing worth keeping.
 function BoardView:confirmDiscard(text, ok_label, action)
     if not self:gameInProgress() then
         action()
         return
     end
-    local ConfirmBox = require("ui/widget/confirmbox")
-    UIManager:show(ConfirmBox:new{
+    UIManager:show(Dialog:new{
         text = text,
         ok_text = ok_label,
         cancel_text = T("keep_playing"),

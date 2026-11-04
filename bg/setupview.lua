@@ -5,7 +5,6 @@
 -- Levels are read from bg/ai.lua, so the difficulty list grows on its own as
 -- levels are added there.
 
-local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
@@ -16,13 +15,11 @@ local UIManager = require("ui/uimanager")
 
 local AI = require("bg/ai")
 local T = require("bg/i18n")
+local Theme = require("bg/theme")
 local U = require("bg/uiutil")
 local Settings = require("bg/settings")
 
 local Screen = Device.screen
-local BLACK_C = Blitbuffer.COLOR_BLACK
-local WHITE_C = Blitbuffer.COLOR_WHITE
-local GRAY_B = Blitbuffer.COLOR_GRAY_B
 
 local SetupView = InputContainer:extend{
     name = "backgammon_setup",
@@ -71,24 +68,25 @@ end
 function SetupView:textW(face, s, bold) return U.textW(face, s, bold) end
 
 function SetupView:drawText(bb, x, baseline, face, s, bold, color)
-    U.text(bb, x, baseline, face, s, bold, color)
+    U.text(bb, x, baseline, face, s, bold, color or self.P.ink)
 end
 
 function SetupView:drawCentered(bb, cx, baseline, face, s, bold, color)
-    U.centered(bb, cx, baseline, face, s, bold, color)
+    U.centered(bb, cx, baseline, face, s, bold, color or self.P.ink)
 end
 
 -- A full-width selectable row. Selected rows are filled dark with light text,
 -- which reads instantly on e-ink without relying on subtle shading.
 function SetupView:drawRow(bb, r, title, subtitle, selected)
+    local P = self.P
     local radius = math.floor(self.unit * 0.35)
     if selected then
-        bb:paintRoundedRect(r.x, r.y, r.w, r.h, BLACK_C, radius)
+        U.fillRound(bb, r.x, r.y, r.w, r.h, P.primary, radius)
     else
-        bb:paintRoundedRect(r.x, r.y, r.w, r.h, WHITE_C, radius)
-        bb:paintBorder(r.x, r.y, r.w, r.h, 2, BLACK_C, radius)
+        U.fillRound(bb, r.x, r.y, r.w, r.h, P.btn, radius)
+        U.border(bb, r.x, r.y, r.w, r.h, 2, P.ink, radius)
     end
-    local fg = selected and WHITE_C or BLACK_C
+    local fg = selected and P.primary_text or P.ink
     local pad = math.floor(self.unit * 0.8)
     if subtitle then
         self:drawText(bb, r.x + pad, r.y + math.floor(r.h * 0.42) + math.floor(self.face.size * 0.35),
@@ -106,15 +104,17 @@ function SetupView:drawRow(bb, r, title, subtitle, selected)
         local cy = r.y + math.floor(r.h / 2)
         -- U.paintCircle: same pixels as bb:paintCircle, but filled by the C
         -- blitter, so it costs the same in portrait and landscape
-        U.paintCircle(bb, cx, cy, cr, WHITE_C)
-        U.paintCircle(bb, cx, cy, math.floor(cr * 0.5), BLACK_C)
+        U.paintCircle(bb, cx, cy, cr, P.primary_text)
+        U.paintCircle(bb, cx, cy, math.floor(cr * 0.5), P.primary)
     end
 end
 
 function SetupView:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     local W = Screen:getWidth()
-    bb:fill(WHITE_C)
+    local P = Theme.get(bb)
+    self.P = P
+    U.fill(bb, P.paper)
     self.hit = {}
 
     local cx = math.floor(W / 2)
@@ -124,18 +124,18 @@ function SetupView:paintTo(bb, x, y)
     self:drawCentered(bb, cx, yy + math.floor(self.face_title.size * 0.35),
                       self.face_title, T("app_title"), true)
     yy = yy + math.floor(unit * 2.2)
-    self:drawCentered(bb, cx, yy, self.face_small, T("choose_game"), false, BLACK_C)
+    self:drawCentered(bb, cx, yy, self.face_small, T("choose_game"), false)
     yy = yy + math.floor(unit * 1.2)
 
     -- Two settings buttons side by side: board/colours and lifetime stats
     local set_h = math.floor(unit * 1.5)
     local half = math.floor((self.col_w - self.gap) / 2)
     local function textBtn(r, label)
-        bb:paintRoundedRect(r.x, r.y, r.w, r.h, WHITE_C, math.floor(unit * 0.3))
-        bb:paintBorder(r.x, r.y, r.w, r.h, 2, BLACK_C, math.floor(unit * 0.3))
+        U.fillRound(bb, r.x, r.y, r.w, r.h, P.btn, math.floor(unit * 0.3))
+        U.border(bb, r.x, r.y, r.w, r.h, 2, P.ink, math.floor(unit * 0.3))
         self:drawCentered(bb, r.x + math.floor(r.w / 2),
                           r.y + math.floor(r.h / 2) + math.floor(self.face_small.size * 0.35),
-                          self.face_small, label, false, BLACK_C)
+                          self.face_small, label, false)
     end
     local sr = rect(self.col_x, yy, half, set_h)
     local tr = rect(self.col_x + half + self.gap, yy, half, set_h)
@@ -149,15 +149,15 @@ function SetupView:paintTo(bb, x, y)
     if self.has_saved then
         local rh = math.floor(unit * 1.8)
         local rr = rect(self.col_x, yy, self.col_w, rh)
-        bb:paintRoundedRect(rr.x, rr.y, rr.w, rr.h, BLACK_C, math.floor(unit * 0.35))
+        U.fillRound(bb, rr.x, rr.y, rr.w, rr.h, P.primary, math.floor(unit * 0.35))
         self:drawCentered(bb, cx, rr.y + math.floor(rr.h / 2) + math.floor(self.face.size * 0.35),
-                          self.face, T("resume_game"), true, WHITE_C)
+                          self.face, T("resume_game"), true, P.primary_text)
         self.hit.resume = rr
         yy = yy + rh + math.floor(unit * 0.9)
     end
 
     -- Opponent
-    self:drawText(bb, self.col_x, yy, self.face_small, T("opponent"), true, BLACK_C)
+    self:drawText(bb, self.col_x, yy, self.face_small, T("opponent"), true)
     yy = yy + math.floor(unit * 0.6)
 
     local r1 = rect(self.col_x, yy, self.col_w, self.row_h)
@@ -181,7 +181,7 @@ function SetupView:paintTo(bb, x, y)
     -- two-line rows from crowding into the space above the Start button.
     if self.opponent == "ai" then
         yy = yy + math.floor(unit * 0.4)
-        self:drawText(bb, self.col_x, yy, self.face_small, T("difficulty"), true, BLACK_C)
+        self:drawText(bb, self.col_x, yy, self.face_small, T("difficulty"), true)
         yy = yy + math.floor(unit * 0.6)
         self.hit.levels = {}
         local nlv = #AI.levels
@@ -212,15 +212,15 @@ function SetupView:paintTo(bb, x, y)
 
     -- Start / Close pinned near the bottom
     local start_r = rect(self.col_x, footer_top, self.col_w, start_h)
-    bb:paintRoundedRect(start_r.x, start_r.y, start_r.w, start_r.h, BLACK_C, math.floor(unit * 0.4))
+    U.fillRound(bb, start_r.x, start_r.y, start_r.w, start_r.h, P.primary, math.floor(unit * 0.4))
     self:drawCentered(bb, cx, start_r.y + math.floor(start_r.h / 2) + math.floor(self.face.size * 0.4),
-                      self.face, T("start_game"), true, WHITE_C)
+                      self.face, T("start_game"), true, P.primary_text)
     self.hit.start = start_r
 
     local close_w = math.floor(self.col_w * 0.35)
     local close_r = rect(math.floor(W / 2 - close_w / 2), H - math.floor(unit * 1.1), close_w, math.floor(unit * 1.4))
     self:drawCentered(bb, cx, close_r.y + math.floor(close_r.h / 2) + math.floor(self.face_small.size * 0.35),
-                      self.face_small, T("close"), false, BLACK_C)
+                      self.face_small, T("close"), false)
     self.hit.close = close_r
 end
 

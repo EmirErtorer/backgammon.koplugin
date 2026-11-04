@@ -1,7 +1,6 @@
 -- Lifetime statistics screen: total games, current/best win streak against the
 -- computer, and a per-level won/played record. Opened from the start menu.
 
-local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
@@ -13,11 +12,10 @@ local UIManager = require("ui/uimanager")
 local AI = require("bg/ai")
 local Settings = require("bg/settings")
 local T = require("bg/i18n")
+local Theme = require("bg/theme")
 local U = require("bg/uiutil")
 
 local Screen = Device.screen
-local BLACK_C = Blitbuffer.COLOR_BLACK
-local WHITE_C = Blitbuffer.COLOR_WHITE
 
 local StatsView = InputContainer:extend{ name = "backgammon_stats", covers_fullscreen = true }
 
@@ -48,16 +46,18 @@ end
 
 function StatsView:tw(face, s, b) return U.textW(face, s, b) end
 function StatsView:draw(bb, x, base, face, s, b, color)
-    U.text(bb, x, base, face, s, b, color)
+    U.text(bb, x, base, face, s, b, color or self.P.ink)
 end
 function StatsView:centre(bb, cx, base, face, s, b, color)
-    U.centered(bb, cx, base, face, s, b, color)
+    U.centered(bb, cx, base, face, s, b, color or self.P.ink)
 end
 
 function StatsView:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     local W, H = Screen:getWidth(), Screen:getHeight()
-    bb:fill(WHITE_C)
+    local P = Theme.get(bb)
+    self.P = P
+    U.fill(bb, P.paper)
     self.hit = {}
     local unit = self.unit
     local cx = math.floor(W / 2)
@@ -91,9 +91,9 @@ function StatsView:paintTo(bb, x, y)
 
     local done_h = math.floor(unit * 3)
     local done_r = rect(self.col_x, H - done_h - math.floor(unit * 1.4), self.col_w, done_h)
-    bb:paintRoundedRect(done_r.x, done_r.y, done_r.w, done_r.h, BLACK_C, math.floor(unit * 0.4))
+    U.fillRound(bb, done_r.x, done_r.y, done_r.w, done_r.h, P.primary, math.floor(unit * 0.4))
     self:centre(bb, cx, done_r.y + math.floor(done_r.h / 2) + math.floor(self.face.size * 0.4),
-                self.face, T("done"), false, WHITE_C)
+                self.face, T("done"), false, P.primary_text)
     self.hit.done = done_r
 end
 
