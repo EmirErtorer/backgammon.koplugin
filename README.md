@@ -24,7 +24,6 @@ A **backgammon** (tavla) board for KOReader. Play a friend on the same device, o
 | | |
 |---|---|
 | **The computer** | Five levels. Levels 1 to 3 are hand written. Levels 4 and 5 run GNU Backgammon's networks in pure Lua, and Master looks a full roll ahead. |
-| **Two players** | Share one device. The board can turn round each turn. |
 | **Doubling cube** | Optional. Turn it on under **Board & colours**. |
 | **Colour and themes** | Classic (mother of pearl and brown), Forest, Ocean, Rosewood, Midnight or Black & white. Board, dice, buttons, menus and dialogs follow the theme, and a one is red. Black and white screens keep the grey look. |
 | **Review and statistics** | Every move is compared with the neural network's choice, and your record against each level is kept. |
